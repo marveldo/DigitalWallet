@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.sample
+tmp
+venv
+app.exe
