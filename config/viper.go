@@ -5,8 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path"
-
-	"github.com/spf13/viper"
+    "github.com/spf13/viper" 
 )
 
 var viperInstance = viper.New()
@@ -38,6 +37,17 @@ func SetupViper(v *viper.Viper){
 }
 
 func GetConfigFromViper(v *viper.Viper) *Config { 
+	port := func() int {
+		if v.IsSet("APP_PORT") {
+           if v.GetInt("APP_PORT") < 1 {
+			 return 7001
+		   } else {
+			return viper.GetInt("APP_PORT")
+		   }
+		}else {
+			return 7001
+		}
+	}()
     databaseConfig := DatabaseConfig{
 		Host:     v.GetString("DB_HOST"),
 		Port:     v.GetInt("DB_PORT"),
@@ -79,6 +89,30 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 			} else {
 				return "asynq"
 			}}(),
+		Concurrency:  func() int {
+           if v.IsSet("ASYNC_REDIS_CONCURRENCY"){
+               con := v.GetInt("ASYNC_REDIS_CONCURRENCY")
+			   if con < 1 {
+				return 10
+			   }
+			   return con
+		   } else {
+			return 10
+		   }
+		}(),
+		DB:  func() int {
+           if v.IsSet("ASYNC_REDIS_DB"){
+               con := v.GetInt("ASYNC_REDIS_DB")
+			   if con < 1 {
+				return 10
+			   }
+			   return con
+		   } else {
+			return 10
+		   }
+		}(),
+		Username: v.GetString("ASYNC_REDIS_USERNAME"),
+		Password:  v.GetString("ASYNC_REDIS_PASSWORD"),
 	}
 
 	return &Config{
@@ -86,6 +120,7 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		Uptrace:          uptraceConfig,
 		BackgroundWorker: backgroundWorkerConfig,
 		AllowedOrigins:   getAllowedOrigins(v),
+		Port: port,
 	}
   }
 

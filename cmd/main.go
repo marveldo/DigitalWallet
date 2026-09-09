@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 
 	"github/marveldo/eda-monolith/config"
 	"github/marveldo/eda-monolith/internal/api"
 	"github/marveldo/eda-monolith/internal/api/routes"
 	"github/marveldo/eda-monolith/internal/api/services"
+	"github/marveldo/eda-monolith/internal/queues"
 	"github/marveldo/eda-monolith/internal/repository"
 	dbmodels "github/marveldo/eda-monolith/internal/repository/db"
 	"github/marveldo/eda-monolith/telemetry"
@@ -26,6 +28,7 @@ type StartServerConfig struct {
 	*config.Config
 	*viper.Viper
 	Services *services.Service
+	*slog.Logger
 	trace.Tracer
 }
 
@@ -48,21 +51,23 @@ func main() {
 			StartNewDB,
 			StartNewRepo,
 			StartNewServices,
+			StartNewQueueWorker,
 		),
 		fx.Invoke(func(lc fx.Lifecycle, cfg StartServerConfig) {
-		
+
 			server := api.NewApiServer(BuildApiConfig(&cfg))
 			lc.Append(fx.Hook{
 				OnStart: func(ctx context.Context) error {
-					go StartServer(server)
+					go StartServer(server, cfg.Logger)
 					return nil
 				},
 				OnStop: func(ctx context.Context) error {
-					fmt.Println("shutting down api")
+					cfg.Logger.Info("shutting down api")
 					return server.Shutdown(ctx)
 				},
 			})
 		}),
+		fx.Invoke(func(worker *queues.AsynqWorkerStruct) {}),
 	)
 	fx_instance.Run()
 }
@@ -70,6 +75,7 @@ func main() {
 func BuildApiConfig(cfg *StartServerConfig) api.StartApiConfigParams {
 	return api.StartApiConfigParams{
 		Services:       cfg.Services,
+		Logger:         cfg.Logger,
 		Tracer:         cfg.Tracer,
 		Port:           cfg.Viper.GetInt("PORT"),
 		AllowedOrigins: cfg.Config.AllowedOrigins,
@@ -83,8 +89,8 @@ func BuildApiConfig(cfg *StartServerConfig) api.StartApiConfigParams {
 	}
 }
 
-func StartServer(server *http.Server) {
-	fmt.Println("About to start api")
+func StartServer(server *http.Server, logger *slog.Logger) {
+	logger.Info("about to start api", slog.String("addr", server.Addr))
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		panic(fmt.Errorf("api server failed: %w", err))
 	}
@@ -117,8 +123,24 @@ func StartContext() context.Context {
 	return ctx
 }
 
-func StartNewLogger(lc fx.Lifecycle) *slog.Logger {
-	logger := slog.Default()
+// StartNewLogger builds the app-wide structured logger and installs it as the
+// slog default, so any package that reaches for slog.Default() (rather than
+// taking the injected *slog.Logger) still writes in the same format.
+func StartNewLogger(lc fx.Lifecycle, v *viper.Viper) *slog.Logger {
+	level := slog.LevelInfo
+	if err := level.UnmarshalText([]byte(v.GetString("LOG_LEVEL"))); err != nil {
+		level = slog.LevelInfo
+	}
+
+	var handler slog.Handler
+	opts := &slog.HandlerOptions{Level: level}
+	if v.GetString("LOG_FORMAT") == "text" {
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	}
+
+	logger := slog.New(handler).With(slog.String("service", "eda-monolith"))
 	slog.SetDefault(logger)
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
@@ -195,16 +217,18 @@ func StartNewDB(lc fx.Lifecycle, app_cfg *config.Config, logger *slog.Logger) *g
 	return db
 }
 
-func StartNewRepo(lc fx.Lifecycle, db *gorm.DB, tracer trace.Tracer, app_cfg *config.Config) *repository.Repository {
+func StartNewRepo(lc fx.Lifecycle, db *gorm.DB, tracer trace.Tracer, logger *slog.Logger, app_cfg *config.Config) *repository.Repository {
 	return repository.NewRepository(&repository.RepoConfig{
 		DB:     db,
 		Tracer: tracer,
+		Logger: logger.With(slog.String("layer", "repository")),
 	})
 }
 
 func StartNewServices(lc fx.Lifecycle, cfg StartServicesConfig) *services.Service {
 	srvs := services.NewService(&services.ServiceConfig{
 		Repository: cfg.Repository,
+		Logger:     cfg.Logger.With(slog.String("layer", "services")),
 	})
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
@@ -215,4 +239,32 @@ func StartNewServices(lc fx.Lifecycle, cfg StartServicesConfig) *services.Servic
 		},
 	})
 	return srvs
+}
+
+
+func StartNewQueueWorker(lc fx.Lifecycle, app_cfg *config.Config, repo *repository.Repository, logger *slog.Logger) (*queues.AsynqWorkerStruct, error) {
+	worker, err := queues.NewAsyncWorker(&queues.AsynqWorkerConfig{
+		Config:     &app_cfg.BackgroundWorker,
+		Repository: repo,
+		Logger:     logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if err := worker.Start(); err != nil {
+				logger.Error("queue worker not started, background tasks will not run",
+					slog.Any("error", err))
+				return nil
+			}
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			worker.Shutdown()
+			return nil
+		},
+	})
+	return worker, nil
 }

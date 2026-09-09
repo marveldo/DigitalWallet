@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github/marveldo/eda-monolith/internal/api/services"
@@ -23,13 +24,14 @@ func UserDocs(r spec.Router) {
 }
 
 func (rt *Routes) CreateUser(w http.ResponseWriter, r *http.Request) {
+	log := rt.RequestLogger("user.create")
 	serviceCtx, span := rt.GetServiceCtx(r.Context(), "user.create")
 	if span != nil {
 		defer span.End()
 	}
 
 	var body CreateUserRequest
-	if !rt.DecodeAndValidate(w, r, span, &body) {
+	if !rt.DecodeAndValidate(w, r, log, span, &body) {
 		return
 	}
 
@@ -44,10 +46,11 @@ func (rt *Routes) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Gender:          body.Gender,
 	})
 	if appErr != nil {
-		rt.WriteAppError(w, span, appErr)
+		rt.WriteAppError(w, log, span, appErr)
 		return
 	}
 
+	log.Info("user registered", slog.String("user_id", user.ID))
 	rt.WriteJSON(w, http.StatusCreated, rt.MapUserToRouteDomain(user))
 }
 

@@ -93,7 +93,7 @@ func (rt *Routes) ServeOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	doc, err := rt.Spec.MarshalYAML()
 	if err != nil {
 		rt.Logger.Error("failed generating openapi document", slog.Any("error", err))
-		rt.WriteError(w, nil, http.StatusInternalServerError, "Could not generate OpenAPI document", err)
+		rt.WriteError(w, rt.Logger, nil, http.StatusInternalServerError, "Could not generate OpenAPI document", err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/yaml")

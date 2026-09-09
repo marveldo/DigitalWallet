@@ -1,6 +1,10 @@
 package repository
 
-import "github/marveldo/eda-monolith/internal/repository/db"
+import (
+	"log/slog"
+
+	"github/marveldo/eda-monolith/internal/repository/db"
+)
 
 type UserRepository struct{}
 
@@ -23,7 +27,7 @@ func (r *UserRepository) CreateUser(ctx *RepoCtx, user *UserInputParam) (*User, 
 	}
 	err := conn.WithContext(ctx.Context).Create(&userModel).Error
 	if err != nil {
-		return nil, wrapGormError(err)
+		return nil, ctx.LogError("user.create", err)
 	}
 	return r.MapUserModelToUser(&userModel), nil
 
@@ -34,7 +38,7 @@ func (r *UserRepository) GetUserByEmail(ctx *RepoCtx, email string) (*User, erro
 	var userModel db.User
 	err := conn.WithContext(ctx.Context).Where("email = ?", email).First(&userModel).Error
 	if err != nil {
-		return nil, wrapGormError(err)
+		return nil, ctx.LogError("user.get_by_email", err)
 	}
 	return r.MapUserModelToUser(&userModel), nil
 }
@@ -42,9 +46,13 @@ func (r *UserRepository) GetUserByEmail(ctx *RepoCtx, email string) (*User, erro
 func (r *UserRepository) GetUserByID(ctx *RepoCtx, id string) (*User, error) {
 	conn := ctx.DB
 	var userModel db.User
-	err := conn.WithContext(ctx.Context).Where("id = ?", id).First(&userModel).Error
+	userID, err := ParseUUID(id)
 	if err != nil {
-		return nil, wrapGormError(err)
+		return nil, ctx.LogError("user.get_by_id", err, slog.String("id", id))
+	}
+	err = conn.WithContext(ctx.Context).Where("id = ?", userID).First(&userModel).Error
+	if err != nil {
+		return nil, ctx.LogError("user.get_by_id", err)
 	}
 	return r.MapUserModelToUser(&userModel), nil
 }
@@ -53,47 +61,55 @@ func (r *UserRepository) UpdateUser(ctx *RepoCtx, user *User) (*User, error) {
 	conn := ctx.DB
 	var userModel db.User
 	updateFields := make(map[string]interface{})
-	err := conn.WithContext(ctx.Context).Where("id = ?", user.ID).First(&userModel).Error
+	userID, err := ParseUUID(user.ID)
 	if err != nil {
-		return nil, wrapGormError(err)
+		return nil, ctx.LogError("user.update", err, slog.String("id", user.ID))
+	}
+	err = conn.WithContext(ctx.Context).Where("id = ?", userID).First(&userModel).Error
+	if err != nil {
+		return nil, ctx.LogError("user.update", err)
 	}
 
 	err = conn.WithContext(ctx.Context).Model(&userModel).Updates(updateFields).Error
 	if err != nil {
-		return nil, wrapGormError(err)
+		return nil, ctx.LogError("user.update", err)
 	}
 	r.MapUpdateFields(user, updateFields)
 
-	err = conn.WithContext(ctx.Context).Where("id = ?", user.ID).First(&userModel).Error
+	err = conn.WithContext(ctx.Context).Where("id = ?", userID).First(&userModel).Error
 	if err != nil {
-		return nil, wrapGormError(err)
+		return nil, ctx.LogError("user.update", err)
 	}
 	return r.MapUserModelToUser(&userModel), nil
 }
 
-func (r *UserRepository) UserEmailExists(ctx *RepoCtx , email string) (bool , error) {
+func (r *UserRepository) UserEmailExists(ctx *RepoCtx, email string) (bool, error) {
 	conn := ctx.DB
-	var exists bool 
+	var exists bool
 
 	err := conn.Model(db.User{}).Select("count(1) > 0").Where("email = ?", email).Find(&exists).Error
 
 	if err != nil {
-		return false , wrapGormError(err)
+		return false, ctx.LogError("user.email_exists", err)
 	}
 
-	return exists , nil
+	return exists, nil
 }
 func (r *UserRepository) DeleteUser(ctx *RepoCtx, id string) error {
 	conn := ctx.DB
 	var userModel db.User
-	err := conn.WithContext(ctx.Context).Where("id = ?", id).First(&userModel).Error
+	userID, err := ParseUUID(id)
 	if err != nil {
-		return wrapGormError(err)
+		return ctx.LogError("user.delete", err, slog.String("id", id))
+	}
+	err = conn.WithContext(ctx.Context).Where("id = ?", userID).First(&userModel).Error
+	if err != nil {
+		return ctx.LogError("user.delete", err)
 	}
 	userModel.IsActive = false
 	err = conn.WithContext(ctx.Context).Save(&userModel).Error
 	if err != nil {
-		return wrapGormError(err)
+		return ctx.LogError("user.delete", err)
 	}
 	return nil
 
@@ -142,7 +158,7 @@ func (r *UserRepository) GetAllUsers(ctx *RepoCtx, filters *UserFilters) ([]*Use
 	}
 	err := query.Find(&userModels).Error
 	if err != nil {
-		return nil, wrapGormError(err)
+		return nil, ctx.LogError("user.get_all", err)
 	}
 	for _, userModel := range userModels {
 		finalusers = append(finalusers, r.MapUserModelToUser(&userModel))
@@ -151,10 +167,9 @@ func (r *UserRepository) GetAllUsers(ctx *RepoCtx, filters *UserFilters) ([]*Use
 
 }
 
-
 func (r *UserRepository) MapUserModelToUser(userModel *db.User) *User {
 	return &User{
-		ID:              userModel.ID,
+		ID:              userModel.ID.String(),
 		FirstName:       userModel.FirstName,
 		LastName:        userModel.LastName,
 		Email:           userModel.Email,

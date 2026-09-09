@@ -18,7 +18,7 @@ import (
 
 type Routes struct {
 	*chi.Mux
-	Logger    slog.Logger
+	Logger    *slog.Logger
 	Services  *services.Service
 	Validator *validator.Validate
 	Spec      spec.Generator
@@ -29,6 +29,7 @@ type SetupRoutesConfigParams struct {
 	*chi.Mux
 	Services *services.Service
 	Spec     spec.Generator
+	Logger   *slog.Logger
 	trace.Tracer
 }
 
@@ -85,9 +86,13 @@ func isLocalhostOrigin(origin string) bool {
 }
 
 func SetupRoutes(cfg SetupRoutesConfigParams) *Routes {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	routes := &Routes{
 		Mux:       cfg.Mux,
-		Logger:    *slog.Default(),
+		Logger:    logger,
 		Services:  cfg.Services,
 		Spec:      cfg.Spec,
 		Tracer:    cfg.Tracer,
@@ -119,5 +124,6 @@ func (rt *Routes) GetServiceCtx(ctx context.Context, name string) (*services.Ser
 		Context: ctx,
 		Span:    span,
 		Tracer:  rt.Tracer,
+		Logger:  rt.Logger.With(slog.String("operation", name)),
 	}), span
 }

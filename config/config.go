@@ -7,7 +7,7 @@ type Config struct {
 	Uptrace
 	BackgroundWorker AsynqBackgroundWorker
 	AllowedOrigins []string
-
+    Port int
 }
 
 type DatabaseConfig struct {
@@ -28,4 +28,8 @@ type Uptrace struct {
 type AsynqBackgroundWorker struct {
 	RedisUrl       string
 	RedisNamespace string
+	Concurrency    int
+	Username string
+	Password string
+	DB    int
 }

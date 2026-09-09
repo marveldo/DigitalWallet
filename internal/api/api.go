@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github/marveldo/eda-monolith/internal/api/routes"
@@ -12,6 +13,7 @@ import (
 
 type StartApiConfigParams struct {
 	Services       *services.Service
+	Logger         *slog.Logger
 	Tracer         trace.Tracer
 	Port           int
 	AllowedOrigins []string
@@ -28,6 +30,7 @@ func NewApiServer(cfg StartApiConfigParams) *http.Server {
 		Mux:      mux,
 		Services: cfg.Services,
 		Spec:     docs,
+		Logger:   cfg.Logger,
 		Tracer:   cfg.Tracer,
 	})
 
@@ -39,11 +42,4 @@ func NewApiServer(cfg StartApiConfigParams) *http.Server {
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: rts.Mux,
 	}
-}
-
-// StartApi builds the server and blocks in ListenAndServe.
-func StartApi(cfg StartApiConfigParams) error {
-	server := NewApiServer(cfg)
-	fmt.Printf("api listening on %s\n", server.Addr)
-	return server.ListenAndServe()
 }
