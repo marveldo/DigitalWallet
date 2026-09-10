@@ -71,6 +71,7 @@ func main() {
 			})
 		}),
 		fx.Invoke(func(worker *queues.AsynqWorkerStruct) {}),
+		fx.Invoke(RegisterListeners),
 	)
 	fx_instance.Run()
 }
@@ -283,6 +284,6 @@ func StartNewEventBus(logger *slog.Logger) *events.EventBus {
 // seam between the bus and the queue: the bus itself knows nothing about asynq,
 // and the worker knows nothing about domain events.
 func RegisterListeners(bus *events.EventBus, worker *queues.AsynqWorkerStruct, logger *slog.Logger) {
-	events.RegisterEmailListeners(bus, worker)
+	events.RegisterEmailListeners(bus, worker.EmailWorker)
 	logger.Info("event listeners registered")
 }
