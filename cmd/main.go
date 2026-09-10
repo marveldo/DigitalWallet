@@ -10,13 +10,16 @@ import (
 	"github/marveldo/eda-monolith/config"
 	"github/marveldo/eda-monolith/internal/api"
 	"github/marveldo/eda-monolith/internal/api/events"
+	"github/marveldo/eda-monolith/internal/api/providers"
 	"github/marveldo/eda-monolith/internal/api/routes"
 	"github/marveldo/eda-monolith/internal/api/services"
+	"github/marveldo/eda-monolith/internal/otp"
 	"github/marveldo/eda-monolith/internal/queues"
 	"github/marveldo/eda-monolith/internal/repository"
 	dbmodels "github/marveldo/eda-monolith/internal/repository/db"
 	"github/marveldo/eda-monolith/telemetry"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/fx"
@@ -40,6 +43,7 @@ type StartServicesConfig struct {
 	trace.Tracer
 	*slog.Logger
 	EventBus *events.EventBus
+	Store    *otp.Store
 }
 
 func main() {
@@ -52,6 +56,8 @@ func main() {
 			StartTracer,
 			StartNewDB,
 			StartNewRepo,
+			StartNewRedisClient,
+			StartNewOTPStore,
 			StartNewEventBus,
 			StartNewServices,
 			StartNewQueueWorker,
@@ -127,9 +133,6 @@ func StartContext() context.Context {
 	return ctx
 }
 
-// StartNewLogger builds the app-wide structured logger and installs it as the
-// slog default, so any package that reaches for slog.Default() (rather than
-// taking the injected *slog.Logger) still writes in the same format.
 func StartNewLogger(lc fx.Lifecycle, v *viper.Viper) *slog.Logger {
 	level := slog.LevelInfo
 	if err := level.UnmarshalText([]byte(v.GetString("LOG_LEVEL"))); err != nil {
@@ -158,7 +161,7 @@ func StartNewLogger(lc fx.Lifecycle, v *viper.Viper) *slog.Logger {
 }
 
 func StartTracer(lc fx.Lifecycle, ctx context.Context, cfg *config.Config) trace.Tracer {
-	tracer := telemetry.StartAppTracer(ctx, telemetry.TracerConfig{
+	tracer, shutdown := telemetry.StartAppTracer(ctx, telemetry.TracerConfig{
 		AppName:           "EDA Monolith",
 		AppServiceName:    cfg.UptraceServiceName,
 		AppServiceVersion: cfg.UptraceServiceVersion,
@@ -169,7 +172,8 @@ func StartTracer(lc fx.Lifecycle, ctx context.Context, cfg *config.Config) trace
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
-			return nil
+
+			return shutdown(ctx)
 		},
 	})
 	return tracer
@@ -195,10 +199,6 @@ func StartNewDB(lc fx.Lifecycle, app_cfg *config.Config, logger *slog.Logger) *g
 		migrationModels := []any{
 			&dbmodels.User{},
 		}
-		// AutoMigrate each model independently rather than one call for all
-		// of them: GORM's AutoMigrate(models...) stops at the first error, so
-		// a single failure would otherwise abort migration for every model
-		// after it, not just the one that hit the error.
 		for _, model := range migrationModels {
 			if err := db.AutoMigrate(model); err != nil {
 				panic(err)
@@ -234,6 +234,7 @@ func StartNewServices(lc fx.Lifecycle, cfg StartServicesConfig) *services.Servic
 		Repository: cfg.Repository,
 		Logger:     cfg.Logger.With(slog.String("layer", "services")),
 		EventBus:   cfg.EventBus,
+		Store:      cfg.Store,
 	})
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
@@ -246,11 +247,24 @@ func StartNewServices(lc fx.Lifecycle, cfg StartServicesConfig) *services.Servic
 	return srvs
 }
 
-func StartNewQueueWorker(lc fx.Lifecycle, app_cfg *config.Config, repo *repository.Repository, logger *slog.Logger) (*queues.AsynqWorkerStruct, error) {
+func StartNewQueueWorker(lc fx.Lifecycle, app_cfg *config.Config, repo *repository.Repository, logger *slog.Logger, trace trace.Tracer) (*queues.AsynqWorkerStruct, error) {
 	worker, err := queues.NewAsyncWorker(&queues.AsynqWorkerConfig{
 		Config:     &app_cfg.BackgroundWorker,
 		Repository: repo,
 		Logger:     logger,
+		Sender: func() queues.EmailSender {
+			switch app_cfg.EmailProvider {
+			case "resend":
+				return providers.NewResendProvider(&providers.ResendProviderConfig{
+					ResendKey:   app_cfg.ResendKey,
+					SenderEmail: app_cfg.ResendEmail,
+					Logger:      logger,
+					Tracer:      trace,
+				})
+			default:
+				return nil
+			}
+		}(),
 	})
 	if err != nil {
 		return nil, err
@@ -273,17 +287,41 @@ func StartNewQueueWorker(lc fx.Lifecycle, app_cfg *config.Config, repo *reposito
 	return worker, nil
 }
 
-// StartNewEventBus is the in-process, synchronous pub-sub that services emit
-// domain events to. RegisterListeners is what actually reacts to them — this
-// constructor just builds the bus.
-func StartNewEventBus(logger *slog.Logger) *events.EventBus {
-	return events.NewEventBus(&events.EventBusConfig{Logger: logger})
+func StartNewRedisClient(lc fx.Lifecycle, cfg *config.Config, logger *slog.Logger) (*redis.Client, error) {
+	client, err := otp.NewRedisClient(cfg.BackgroundWorker)
+	if err != nil {
+		return nil, err
+	}
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if err := client.Ping(ctx).Err(); err != nil {
+				logger.Error("otp redis unreachable", slog.Any("error", err))
+				return err
+			}
+			logger.Info("otp redis connected", slog.Int("db", cfg.BackgroundWorker.DB))
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			return client.Close()
+		},
+	})
+	return client, nil
 }
 
-// RegisterListeners wires each domain's subscribers onto the bus. This is the
-// seam between the bus and the queue: the bus itself knows nothing about asynq,
-// and the worker knows nothing about domain events.
-func RegisterListeners(bus *events.EventBus, worker *queues.AsynqWorkerStruct, logger *slog.Logger) {
-	events.RegisterEmailListeners(bus, worker.EmailWorker)
+func StartNewOTPStore(client *redis.Client, logger *slog.Logger, tracer trace.Tracer, cfg *config.Config) *otp.Store {
+	return otp.NewStore(&otp.StoreConfig{
+		Client: client,
+		Logger: logger,
+		Tracer: tracer,
+		Config: cfg.OTP,
+	})
+}
+
+func StartNewEventBus(logger *slog.Logger, tracer trace.Tracer) *events.EventBus {
+	return events.NewEventBus(&events.EventBusConfig{Logger: logger, Tracer: tracer})
+}
+
+func RegisterListeners(bus *events.EventBus, worker *queues.AsynqWorkerStruct, logger *slog.Logger, otpStore *otp.Store) {
+	events.RegisterEmailListeners(bus, worker.EmailWorker, otpStore)
 	logger.Info("event listeners registered")
 }

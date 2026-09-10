@@ -2,21 +2,21 @@ package events
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
+	"github/marveldo/eda-monolith/internal/otp"
 	"github/marveldo/eda-monolith/internal/queues"
 )
 
-// RegisterEmailListeners is the bridge between the bus and the queue: it is
-// the only place that knows a user signing up should result in an email.
-//
-// The generic parameter is resolved here, where the payload type is obvious,
-// which is why EventBus itself needs no type parameter. Every domain adds its
-// own Register*Listeners naming its own queues.Worker[T].
-func RegisterEmailListeners(bus *EventBus, worker queues.Worker[queues.EmailPayload]) {
+func RegisterEmailListeners(bus *EventBus, worker queues.Worker[queues.EmailPayload], otpStore *otp.Store) {
 	bus.Subscribe(EventUserCreated, func(ctx context.Context, payload any) {
+		ctx, span := bus.StartSpan(ctx, "listener.email.welcome")
+		defer span.End()
+
 		event, ok := payload.(UserCreatedPayload)
 		if !ok {
+			RecordError(span, fmt.Errorf("unexpected payload type %T for %s", payload, EventUserCreated))
 			bus.Logger.ErrorContext(ctx, "unexpected payload type for event",
 				slog.String("event", EventUserCreated),
 			)
@@ -28,10 +28,20 @@ func RegisterEmailListeners(bus *EventBus, worker queues.Worker[queues.EmailPayl
 			slog.String("user_id", event.UserID),
 		)
 
+		code, err := otpStore.Generate(ctx, event.Email)
+		if err != nil {
+			log.ErrorContext(ctx, "could not issue otp", slog.Any("error", err))
+			RecordError(span, err)
+			return
+		}
+
 		task, err := worker.GenerateNewTask(queues.TaskTypeEmailSend, queues.EmailPayload{
-			To:       event.Email,
-			Subject:  "Welcome",
-			Template: "welcome",
+			To:        []string{event.Email},
+			Subject:   "Welcome to DigiWallet",
+			Template:  queues.TemplateWelcome,
+			OTP:       code,
+			FirstName: event.FirstName,
+			LastName:  event.LastName,
 			Data: map[string]string{
 				"first_name": event.FirstName,
 				"last_name":  event.LastName,
@@ -39,14 +49,13 @@ func RegisterEmailListeners(bus *EventBus, worker queues.Worker[queues.EmailPayl
 		})
 		if err != nil {
 			log.ErrorContext(ctx, "could not build welcome email task", slog.Any("error", err))
+			RecordError(span, err)
 			return
 		}
 
-		// The listener only enqueues. Sending happens out of process in
-		// EmailWorker.HandleEmailSend, so signup latency stays independent of
-		// the mail provider.
-		if info := worker.EnqueueWithContext(task, ctx); info == nil {
-			log.ErrorContext(ctx, "welcome email was not queued")
+		if _, err := worker.EnqueueWithContext(task, ctx); err != nil {
+			log.ErrorContext(ctx, "welcome email was not queued", slog.Any("error", err))
+			RecordError(span, err)
 		}
 	})
 }

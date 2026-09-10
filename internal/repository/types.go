@@ -11,6 +11,7 @@ type User struct {
 	DateOfBirth     *time.Time
 	ProfilePhotoURL *string
 	Gender          string
+	IsVerified      bool
 }
 
 type UserFilters struct {
@@ -28,12 +29,14 @@ type Wallet struct {
 }
 
 type UserInputParam struct {
-	FirstName       string
-	LastName        string
-	Email           string
+	ID              *string
+	FirstName       *string
+	LastName        *string
+	Email           *string
 	Passwordhash    *string
 	PhoneNumber     *string
 	DateOfBirth     *time.Time
 	ProfilePhotoURL *string
 	Gender          *string
+	IsVerified      *bool
 }

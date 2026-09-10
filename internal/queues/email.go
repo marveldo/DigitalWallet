@@ -5,44 +5,46 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github/marveldo/eda-monolith/internal/repository"
 
 	"github.com/hibiken/asynq"
 )
 
-// TaskTypeEmailSend is the task's type name, the key RegisterHandlers maps to
-// a handler. Changing it orphans any task already sitting in Redis.
 const TaskTypeEmailSend = "email:send"
 
-// EmailPayload is what gets marshalled into the task. Keep it small and
-// serialisable — it crosses a process boundary, so pass an id and re-read the
-// record in the handler rather than embedding a whole entity.
 type EmailPayload struct {
-	To       string            `json:"to"`
-	Subject  string            `json:"subject"`
-	Template string            `json:"template"`
-	Data     map[string]string `json:"data,omitempty"`
+	To        []string          `json:"to"`
+	Subject   string            `json:"subject"`
+	Template  string            `json:"template"`
+	OTP       string            `json:"otp,omitempty"`
+	FirstName string            `json:"first_name,omitempty"`
+	LastName  string            `json:"last_name,omitempty"`
+	Data      map[string]string `json:"data,omitempty"`
 }
 
-// EmailSender is the actual delivery mechanism. Swapping in SES, Resend,
-// Postmark or similar is a matter of providing a different implementation to
-// NewAsyncWorker — nothing else in the queue changes.
+func (p EmailPayload) Recipient() string {
+	if len(p.To) == 0 {
+		return ""
+	}
+	return strings.Join(p.To, ", ")
+}
+
 type EmailSender interface {
-	Send(ctx context.Context, payload EmailPayload) error
+	Send(ctx context.Context, payload EmailPayload, body string) error
 }
 
-// LogEmailSender is the default: it logs what it would have sent. It keeps the
-// queue fully wired end to end before a real provider is configured.
 type LogEmailSender struct {
 	Logger *slog.Logger
 }
 
-func (s *LogEmailSender) Send(ctx context.Context, payload EmailPayload) error {
+func (s *LogEmailSender) Send(ctx context.Context, payload EmailPayload, body string) error {
 	s.Logger.WarnContext(ctx, "no email provider configured, email not sent",
-		slog.String("to", payload.To),
+		slog.Any("to", payload.To),
 		slog.String("subject", payload.Subject),
 		slog.String("template", payload.Template),
+		slog.Int("body_bytes", len(body)),
 	)
 	return nil
 }
@@ -82,13 +84,8 @@ func NewEmailWorker(cfg *EmailWorkerConfig) *EmailWorker {
 		Sender:     sender,
 	}
 }
-// EnqueueWithContext pushes a task onto the queue. It returns nil when the
-// enqueue fails: a queued email is not worth taking the process down for, so
-// the failure is logged and the caller decides what to do with a nil info.
-//
-// asynq.Queue is required here — without it the task lands on "default" while
-// the server only consumes the configured namespace, and it would never run.
-func (w *EmailWorker) EnqueueWithContext(task *asynq.Task, ctx context.Context) *asynq.TaskInfo {
+
+func (w *EmailWorker) EnqueueWithContext(task *asynq.Task, ctx context.Context) (*asynq.TaskInfo, error) {
 	opts := []asynq.Option{asynq.MaxRetry(3)}
 	if w.Queue != "" {
 		opts = append(opts, asynq.Queue(w.Queue))
@@ -100,17 +97,17 @@ func (w *EmailWorker) EnqueueWithContext(task *asynq.Task, ctx context.Context) 
 			slog.String("task_type", task.Type()),
 			slog.Any("error", err),
 		)
-		return nil
+		return nil, fmt.Errorf("enqueue %s: %w", task.Type(), err)
 	}
 	w.Logger.InfoContext(ctx, "task enqueued",
 		slog.String("task_id", info.ID),
 		slog.String("task_type", task.Type()),
 		slog.String("queue", info.Queue),
 	)
-	return info
+	return info, nil
 }
 
-func (w *EmailWorker) GenerateNewTask(name string, payload EmailPayload) (*asynq.Task , error) {
+func (w *EmailWorker) GenerateNewTask(name string, payload EmailPayload) (*asynq.Task, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling email payload: %w", err)
@@ -118,9 +115,6 @@ func (w *EmailWorker) GenerateNewTask(name string, payload EmailPayload) (*asynq
 	return asynq.NewTask(name, body), nil
 }
 
-// HandleEmailSend processes one task. A returned error tells asynq to retry
-// (up to MaxRetry, with backoff); asynq.SkipRetry marks the task as failed
-// immediately, which is what a payload that will never parse deserves.
 func (w *EmailWorker) HandleEmailSend(ctx context.Context, task *asynq.Task) error {
 	var payload EmailPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
@@ -130,11 +124,17 @@ func (w *EmailWorker) HandleEmailSend(ctx context.Context, task *asynq.Task) err
 
 	log := w.Logger.With(
 		slog.String("task_type", task.Type()),
-		slog.String("to", payload.To),
+		slog.Any("to", payload.To),
 		slog.String("template", payload.Template),
 	)
 
-	if err := w.Sender.Send(ctx, payload); err != nil {
+	body, err := RenderEmail(payload.Template, payload)
+	if err != nil {
+		log.ErrorContext(ctx, "could not render email template", slog.Any("error", err))
+		return fmt.Errorf("%w: %v", asynq.SkipRetry, err)
+	}
+
+	if err := w.Sender.Send(ctx, payload, body); err != nil {
 		log.ErrorContext(ctx, "failed sending email, will retry", slog.Any("error", err))
 		return err
 	}

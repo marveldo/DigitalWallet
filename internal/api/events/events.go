@@ -2,23 +2,43 @@ package events
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
+
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
-// Handler reacts to one published event. Handlers run synchronously inside the
-// caller's goroutine, so they must stay fast — the work itself belongs on a
-// queue. A handler that blocks blocks the HTTP request that published.
+
 type Handler func(ctx context.Context, payload any)
 
 type EventBus struct {
 	mu       sync.RWMutex
 	handlers map[string][]Handler
 	Logger   *slog.Logger
+	Tracer   trace.Tracer
 }
 
 type EventBusConfig struct {
 	Logger *slog.Logger
+	Tracer trace.Tracer
+}
+
+func (b *EventBus) StartSpan(ctx context.Context, name string) (context.Context, trace.Span) {
+	if b == nil || b.Tracer == nil {
+		return ctx, trace.SpanFromContext(ctx)
+	}
+	return b.Tracer.Start(ctx, name)
+}
+
+
+func RecordError(span trace.Span, err error) {
+	if span == nil || err == nil {
+		return
+	}
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
 }
 
 func NewEventBus(cfg *EventBusConfig) *EventBus {
@@ -29,11 +49,10 @@ func NewEventBus(cfg *EventBusConfig) *EventBus {
 	return &EventBus{
 		handlers: make(map[string][]Handler),
 		Logger:   logger.With(slog.String("layer", "events")),
+		Tracer:   cfg.Tracer,
 	}
 }
 
-// Subscribe registers a handler for an event name. Several handlers may listen
-// to the same event; they run in registration order.
 func (b *EventBus) Subscribe(eventName string, handler Handler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -41,11 +60,6 @@ func (b *EventBus) Subscribe(eventName string, handler Handler) {
 	b.Logger.Debug("event handler subscribed", slog.String("event", eventName))
 }
 
-// Publish delivers the payload to every handler subscribed to eventName.
-//
-// It returns nothing: publishing is a notification, not a request. A listener
-// that fails must not fail the business operation that emitted the event — a
-// user is still created even when the welcome email cannot be queued.
 func (b *EventBus) Publish(ctx context.Context, eventName string, payload any) {
 	b.mu.RLock()
 	// Copy the slice so a handler that subscribes during dispatch cannot
@@ -69,15 +83,16 @@ func (b *EventBus) Publish(ctx context.Context, eventName string, payload any) {
 	}
 }
 
-// dispatch isolates one handler. A panicking listener is contained here rather
-// than taking down the request that published the event.
 func (b *EventBus) dispatch(ctx context.Context, eventName string, handler Handler, payload any) {
+	ctx, span := b.StartSpan(ctx, "event."+eventName)
+	defer span.End()
 	defer func() {
 		if r := recover(); r != nil {
 			b.Logger.ErrorContext(ctx, "event handler panicked",
 				slog.String("event", eventName),
 				slog.Any("panic", r),
 			)
+			RecordError(span, fmt.Errorf("event handler panicked: %v", r))
 		}
 	}()
 	handler(ctx, payload)

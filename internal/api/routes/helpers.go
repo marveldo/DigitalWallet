@@ -64,14 +64,10 @@ func (rt *Routes) WriteAppError(w http.ResponseWriter, log *slog.Logger, span tr
 	rt.WriteJSON(w, code, ErrorResponse{Message: msg, Code: code})
 }
 
-// WriteError renders a plain error that never reached the service layer, such
-// as a malformed body or a failed validation.
 func (rt *Routes) WriteError(w http.ResponseWriter, log *slog.Logger, span trace.Span, code int, msg string, err error) {
 	rt.WriteAppError(w, log, span, &shared.AppError{Code: code, Message: msg, Err: err})
 }
 
-// DecodeAndValidate reads the JSON body into dst and runs struct validation.
-// It reports whether the handler should continue.
 func (rt *Routes) DecodeAndValidate(w http.ResponseWriter, r *http.Request, log *slog.Logger, span trace.Span, dst any) bool {
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		rt.WriteError(w, log, span, http.StatusBadRequest, "Invalid request body", err)

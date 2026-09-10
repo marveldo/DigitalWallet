@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/codes"
 	"gorm.io/gorm"
 )
 
@@ -14,6 +15,8 @@ var (
 	ErrAlreadyExists      = errors.New("record already exists")
 	ErrPrerequisiteNotMet = errors.New("prerequisite relation does not exist")
 	ErrHasDependents      = errors.New("dependent records exist")
+	ErrNothingToUpdate    = errors.New("no fields to update")
+	ErrNoIdentifier       = errors.New("update requires an id or email")
 	ErrLessonLocked       = errors.New("lesson is locked by the course's progression rules")
 )
 
@@ -46,10 +49,20 @@ func (c *RepoCtx) LogError(op string, err error, attrs ...any) error {
 		return wrapped
 	}
 	args := append([]any{slog.String("repo_op", op), slog.Any("error", wrapped)}, attrs...)
-	if errors.Is(wrapped, ErrNotFound) {
+	notFound := errors.Is(wrapped, ErrNotFound)
+	if notFound {
 		c.Logger.DebugContext(c.Context, "repository record not found", args...)
 	} else {
 		c.Logger.ErrorContext(c.Context, "repository query failed", args...)
+	}
+
+	// Record on this operation's own span, so the trace shows which query
+	// failed rather than only that the request did. A missing row is an
+	// ordinary outcome, so it is left unrecorded — marking it an error would
+	// turn every "does this email exist" check red.
+	if c.Span != nil && !notFound {
+		c.Span.RecordError(wrapped)
+		c.Span.SetStatus(codes.Error, wrapped.Error())
 	}
 	return wrapped
 }

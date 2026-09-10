@@ -2,7 +2,7 @@ package services
 
 import "golang.org/x/crypto/bcrypt"
 
-var cost = 12
+var cost = 11
 
 func HashPassword(password []byte) ([]byte, error) {
 

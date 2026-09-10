@@ -12,6 +12,14 @@ type UserInputParam struct {
 	ProfilePhotoURL *string
 	Gender          *string
 }
+type UpdateUserParam struct {
+	FirstName       *string
+	LastName        *string
+	PhoneNumber     *string
+	ProfilePhotoURL *string
+	Gender          *string
+}
+
 type User struct {
 	ID              string
 	FirstName       string
@@ -21,4 +29,18 @@ type User struct {
 	DateOfBirth     *time.Time
 	ProfilePhotoURL *string
 	Gender          string
+	IsVerified      bool
+}
+
+type LoginSuccessful struct {
+	AccessToken  string
+	RefreshToken string
+}
+
+type ResendOtpOk struct {
+	Message string
+}
+
+type AccountVerificationOk struct {
+	Message string
 }

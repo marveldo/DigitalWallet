@@ -1,31 +1,32 @@
 package config
 
 import (
+	"github.com/spf13/viper"
 	"log"
 	"net/url"
 	"os"
 	"path"
-    "github.com/spf13/viper" 
+	"time"
 )
 
 var viperInstance = viper.New()
 
 func GetViperInstance() *viper.Viper {
-	return viperInstance 
+	return viperInstance
 }
 
-func SetupViper(v *viper.Viper){
-    dir , err := os.Getwd()
+func SetupViper(v *viper.Viper) {
+	dir, err := os.Getwd()
 	if err != nil {
 		log.Fatalf("Error getting Path Directory , %v", err)
 	}
 	env_file_path := path.Join(dir, ".env")
-	_ , err = os.Stat(env_file_path)
+	_, err = os.Stat(env_file_path)
 	if os.IsNotExist(err) {
 		log.Fatalf("Error getting Path Directory , %v", err)
 	}
 	v.SetConfigFile(env_file_path)
-	if err = v.ReadInConfig() ; err != nil {
+	if err = v.ReadInConfig(); err != nil {
 		_, ok := err.(viper.ConfigFileNotFoundError)
 		if ok {
 			log.Fatalf("Config File Doesnt Exist in Specific Path, %v", err)
@@ -36,19 +37,19 @@ func SetupViper(v *viper.Viper){
 	v.AutomaticEnv()
 }
 
-func GetConfigFromViper(v *viper.Viper) *Config { 
+func GetConfigFromViper(v *viper.Viper) *Config {
 	port := func() int {
 		if v.IsSet("APP_PORT") {
-           if v.GetInt("APP_PORT") < 1 {
-			 return 7001
-		   } else {
-			return viper.GetInt("APP_PORT")
-		   }
-		}else {
+			if v.GetInt("APP_PORT") < 1 {
+				return 7001
+			} else {
+				return viper.GetInt("APP_PORT")
+			}
+		} else {
 			return 7001
 		}
 	}()
-    databaseConfig := DatabaseConfig{
+	databaseConfig := DatabaseConfig{
 		Host:     v.GetString("DB_HOST"),
 		Port:     v.GetInt("DB_PORT"),
 		Username: v.GetString("DB_USERNAME"),
@@ -57,7 +58,7 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		SkipAutoMigrate: func() bool {
 			if v.IsSet("SKIP_AUTO_MIGRATE") {
 				return v.GetBool("SKIP_AUTO_MIGRATE")
-			}else {
+			} else {
 				return false
 			}
 		}(),
@@ -71,7 +72,7 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		RedisUrl: func() string {
 			if v.IsSet("ASYNC_REDIS_URL") {
 				ul := v.GetString("ASYNC_REDIS_URL")
-				u , err := url.Parse(ul)
+				u, err := url.Parse(ul)
 				if err != nil {
 					log.Fatalf("Error parsing ASYNC_REDIS_URL: %v", err)
 				}
@@ -82,37 +83,59 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 			} else {
 				return "redis://localhost:6379"
 			}
-			}(),
+		}(),
 		RedisNamespace: func() string {
 			if v.IsSet("ASYNC_REDIS_NAMESPACE") {
 				return v.GetString("ASYNC_REDIS_NAMESPACE")
 			} else {
 				return "asynq"
-			}}(),
-		Concurrency:  func() int {
-           if v.IsSet("ASYNC_REDIS_CONCURRENCY"){
-               con := v.GetInt("ASYNC_REDIS_CONCURRENCY")
-			   if con < 1 {
-				return 10
-			   }
-			   return con
-		   } else {
-			return 10
-		   }
+			}
 		}(),
-		DB:  func() int {
-           if v.IsSet("ASYNC_REDIS_DB"){
-               con := v.GetInt("ASYNC_REDIS_DB")
-			   if con < 1 {
+		Concurrency: func() int {
+			if v.IsSet("ASYNC_REDIS_CONCURRENCY") {
+				con := v.GetInt("ASYNC_REDIS_CONCURRENCY")
+				if con < 1 {
+					return 10
+				}
+				return con
+			} else {
 				return 10
-			   }
-			   return con
-		   } else {
-			return 10
-		   }
+			}
+		}(),
+		DB: func() int {
+			if v.IsSet("ASYNC_REDIS_DB") {
+				con := v.GetInt("ASYNC_REDIS_DB")
+				if con < 1 {
+					return 10
+				}
+				return con
+			} else {
+				return 10
+			}
 		}(),
 		Username: v.GetString("ASYNC_REDIS_USERNAME"),
-		Password:  v.GetString("ASYNC_REDIS_PASSWORD"),
+		Password: v.GetString("ASYNC_REDIS_PASSWORD"),
+	}
+
+	otpConfig := OTPConfig{
+		Length: func() int {
+			if v.IsSet("OTP_LENGTH") && v.GetInt("OTP_LENGTH") > 0 {
+				return v.GetInt("OTP_LENGTH")
+			}
+			return 6
+		}(),
+		TTL: func() time.Duration {
+			if v.IsSet("OTP_TTL_MINUTES") && v.GetInt("OTP_TTL_MINUTES") > 0 {
+				return time.Duration(v.GetInt("OTP_TTL_MINUTES")) * time.Minute
+			}
+			return 10 * time.Minute
+		}(),
+		MaxAttempts: func() int {
+			if v.IsSet("OTP_MAX_ATTEMPTS") && v.GetInt("OTP_MAX_ATTEMPTS") > 0 {
+				return v.GetInt("OTP_MAX_ATTEMPTS")
+			}
+			return 5
+		}(),
 	}
 
 	return &Config{
@@ -120,16 +143,19 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		Uptrace:          uptraceConfig,
 		BackgroundWorker: backgroundWorkerConfig,
 		AllowedOrigins:   getAllowedOrigins(v),
-		Port: port,
+		Port:             port,
+		ResendEmail:      v.GetString("RESEND_API_EMAIL"),
+		ResendKey:        v.GetString("RESEND_API_KEY"),
+		EmailProvider:    v.GetString("EMAIL_PROVIDER"),
+		OTP:              otpConfig,
 	}
-  }
+}
 
-
-  func getAllowedOrigins(v *viper.Viper) []string {
+func getAllowedOrigins(v *viper.Viper) []string {
 	allowedOrigins := v.GetStringSlice("ALLOWED_ORIGINS")
 	if len(allowedOrigins) == 0 {
 		log.Println("ALLOWED_ORIGINS is not set or empty, using default value: http://localhost:3000")
 		return []string{"http://localhost:3000"}
 	}
 	return allowedOrigins
-  }
+}

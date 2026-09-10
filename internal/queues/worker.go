@@ -12,7 +12,7 @@ import (
 )
 
 type Worker[T any] interface {
-	EnqueueWithContext(task *asynq.Task, ctx context.Context) *asynq.TaskInfo
+	EnqueueWithContext(task *asynq.Task, ctx context.Context) (*asynq.TaskInfo, error)
 	GenerateNewTask(name string, payload T) (*asynq.Task, error)
 }
 
@@ -107,15 +107,11 @@ func RedisConnOpt(cfg *config.AsynqBackgroundWorker) (asynq.RedisConnOpt, error)
 	return clientOpt, nil
 }
 
-// RegisterHandlers maps each task type onto the function that processes it.
-// Add a line here for every new task type — a task with no registered handler
-// is retried until it is archived.
+
 func (w *AsynqWorkerStruct) RegisterHandlers() {
 	w.mux.HandleFunc(TaskTypeEmailSend, w.EmailWorker.HandleEmailSend)
 }
 
-// Start begins processing in the background. asynq.Server.Start does not
-// block, unlike Run, so this is safe to call from an fx OnStart hook.
 func (w *AsynqWorkerStruct) Start() error {
 	if err := w.srv.Ping(); err != nil {
 		return fmt.Errorf("redis unreachable: %w", err)
@@ -124,7 +120,7 @@ func (w *AsynqWorkerStruct) Start() error {
 	return w.srv.Start(w.mux)
 }
 
-// Shutdown drains in-flight tasks and stops the server.
+
 func (w *AsynqWorkerStruct) Shutdown() {
 	w.Logger.Info("shutting down queue worker", slog.String("queue", w.Queue))
 	w.srv.Shutdown()

@@ -83,3 +83,14 @@ func (r *Repository) NewRepoCtx(cfgs ...RepoctxConfig) *RepoCtx {
 		Logger:  logger,
 	}
 }
+
+func (c *RepoCtx) Start(op string) (*RepoCtx, trace.Span) {
+	if c.Tracer == nil {
+		return c, trace.SpanFromContext(c.Context)
+	}
+	ctx, span := c.Tracer.Start(c.Context, "repository."+op)
+	child := *c
+	child.Context = ctx
+	child.Span = span
+	return &child, span
+}

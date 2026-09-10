@@ -3,10 +3,15 @@ package services
 import (
 	"context"
 	"log/slog"
+	"net/http"
+
+	"github/marveldo/eda-monolith/shared"
 
 	"github/marveldo/eda-monolith/internal/api/events"
+	"github/marveldo/eda-monolith/internal/otp"
 	"github/marveldo/eda-monolith/internal/repository"
 
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"gorm.io/gorm"
 )
@@ -17,12 +22,14 @@ type Service struct {
 	trace.Tracer
 	Logger   *slog.Logger
 	EventBus *events.EventBus
+	*otp.Store
 }
 
 type ServiceConfig struct {
 	Repository *repository.Repository
 	Logger     *slog.Logger
 	EventBus   *events.EventBus
+	Store      *otp.Store
 }
 
 type ServiceCtx struct {
@@ -53,6 +60,7 @@ func NewService(cfg *ServiceConfig) *Service {
 		Tracer:     cfg.Repository.Tracer,
 		Logger:     logger,
 		EventBus:   cfg.EventBus,
+		Store:      cfg.Store,
 	}
 }
 
@@ -107,10 +115,37 @@ func (s *Service) GetRepoCtx(cfgs ...ServiceCtxConfig) *repository.RepoCtx {
 	}
 }
 
-
 func (s *Service) PublishEvent(ctx *ServiceCtx, eventName string, payload any) {
 	if s.EventBus == nil {
 		return
 	}
 	s.EventBus.Publish(ctx.Context, eventName, payload)
+}
+
+func (c *ServiceCtx) Start(op string) (*ServiceCtx, trace.Span) {
+	if c.Tracer == nil {
+		return c, trace.SpanFromContext(c.Context)
+	}
+	ctx, span := c.Tracer.Start(c.Context, "service."+op)
+	child := *c
+	child.Context = ctx
+	child.Span = span
+	return &child, span
+}
+
+func (c *ServiceCtx) Fail(appErr *shared.AppError) *shared.AppError {
+	if appErr == nil || c.Span == nil {
+		return appErr
+	}
+	if appErr.Err != nil {
+		c.Span.RecordError(appErr.Err)
+	}
+	if appErr.Code == 0 || appErr.Code >= http.StatusInternalServerError {
+		msg := appErr.Message
+		if msg == "" {
+			msg = appErr.Error()
+		}
+		c.Span.SetStatus(codes.Error, msg)
+	}
+	return appErr
 }

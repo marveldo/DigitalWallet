@@ -1,21 +1,31 @@
 package config
 
-
+import "time"
 
 type Config struct {
 	Database DatabaseConfig
 	Uptrace
 	BackgroundWorker AsynqBackgroundWorker
-	AllowedOrigins []string
-    Port int
+	AllowedOrigins   []string
+	Port             int
+	ResendEmail      string
+	ResendKey        string
+	EmailProvider    string
+	OTP              OTPConfig
+}
+
+type OTPConfig struct {
+	Length      int
+	TTL         time.Duration
+	MaxAttempts int
 }
 
 type DatabaseConfig struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	Database string
+	Host            string
+	Port            int
+	Username        string
+	Password        string
+	Database        string
 	SkipAutoMigrate bool
 }
 
@@ -29,7 +39,7 @@ type AsynqBackgroundWorker struct {
 	RedisUrl       string
 	RedisNamespace string
 	Concurrency    int
-	Username string
-	Password string
-	DB    int
+	Username       string
+	Password       string
+	DB             int
 }

@@ -46,12 +46,9 @@ type User struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 	DeletedAt       gorm.DeletedAt `gorm:"index"`
+	IsVerified      bool           `gorm:"type:boolean;not null;default:false"`
 }
 
-// BeforeCreate assigns the primary key in Go rather than leaning on a database
-// default. The row's id is then known to the caller straight after Create,
-// without a re-read, and the schema stays portable — gen_random_uuid() is
-// Postgres-only (and UUID() is MySQL-only).
 func (u *User) BeforeCreate(tx *gorm.DB) error {
 	if u.ID == uuid.Nil {
 		u.ID = uuid.New()

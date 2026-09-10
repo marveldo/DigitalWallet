@@ -6,22 +6,10 @@ import (
 
 	"github/marveldo/eda-monolith/internal/api/services"
 
-	"github.com/oaswrap/spec"
-	"github.com/oaswrap/spec/option"
+	"github.com/go-chi/chi/v5"
+
 )
 
-func UserDocs(r spec.Router) {
-	r.Post("/api/v1/users",
-		option.OperationID("user-create"),
-		option.Summary("Create a user"),
-		option.Description("Registers a new user and returns the created record."),
-		option.Tags("Users"),
-		option.Request(new(CreateUserRequest)),
-		option.Response(http.StatusCreated, new(UserResponse)),
-		option.Response(http.StatusConflict, new(ErrorResponse)),
-		option.Response(http.StatusUnprocessableEntity, new(ErrorResponse)),
-	)
-}
 
 func (rt *Routes) CreateUser(w http.ResponseWriter, r *http.Request) {
 	log := rt.RequestLogger("user.create")
@@ -54,6 +42,106 @@ func (rt *Routes) CreateUser(w http.ResponseWriter, r *http.Request) {
 	rt.WriteJSON(w, http.StatusCreated, rt.MapUserToRouteDomain(user))
 }
 
+func (rt *Routes) UpdateUser(w http.ResponseWriter, r *http.Request) {
+	log := rt.RequestLogger("user.update")
+	serviceCtx, span := rt.GetServiceCtx(r.Context(), "user.update")
+	if span != nil {
+		defer span.End()
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		rt.WriteError(w, log, span, http.StatusBadRequest, "Missing user id", nil)
+		return
+	}
+
+	var body UpdateUserRequest
+	if !rt.DecodeAndValidate(w, r, log, span, &body) {
+		return
+	}
+
+	user, appErr := rt.Services.UpdateUser(serviceCtx, id, &services.UpdateUserParam{
+		FirstName:       body.FirstName,
+		LastName:        body.LastName,
+		PhoneNumber:     body.PhoneNumber,
+		ProfilePhotoURL: body.ProfilePhotoURL,
+		Gender:          body.Gender,
+	})
+	if appErr != nil {
+		rt.WriteAppError(w, log, span, appErr)
+		return
+	}
+
+	log.Info("user updated", slog.String("user_id", user.ID))
+	rt.WriteJSON(w, http.StatusOK, rt.MapUserToRouteDomain(user))
+}
+
+func (rt *Routes) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	log := rt.RequestLogger("user.delete")
+	serviceCtx, span := rt.GetServiceCtx(r.Context(), "user.delete")
+	if span != nil {
+		defer span.End()
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		rt.WriteError(w, log, span, http.StatusBadRequest, "Missing user id", nil)
+		return
+	}
+
+	if appErr := rt.Services.DeleteUser(serviceCtx, id); appErr != nil {
+		rt.WriteAppError(w, log, span, appErr)
+		return
+	}
+
+	log.Info("user deleted", slog.String("user_id", id))
+	rt.WriteJSON(w, http.StatusNoContent, nil)
+}
+
+func (rt *Routes) ResendOtp(w http.ResponseWriter, r *http.Request) {
+	log := rt.RequestLogger("user.otp.resend")
+	serviceCtx, span := rt.GetServiceCtx(r.Context(), "user.otp.resend")
+	if span != nil {
+		defer span.End()
+	}
+
+	var body ResendOtpRequest
+	if !rt.DecodeAndValidate(w, r, log, span, &body) {
+		return
+	}
+
+	result, appErr := rt.Services.ResendUserOtp(serviceCtx, body.Email)
+	if appErr != nil {
+		rt.WriteAppError(w, log, span, appErr)
+		return
+	}
+
+	log.Info("otp resend requested")
+	rt.WriteJSON(w, http.StatusOK, MessageResponse{Message: result.Message})
+}
+
+func (rt *Routes) VerifyOtp(w http.ResponseWriter, r *http.Request) {
+	log := rt.RequestLogger("user.otp.verify")
+	serviceCtx, span := rt.GetServiceCtx(r.Context(), "user.otp.verify")
+	if span != nil {
+		defer span.End()
+	}
+
+	var body VerifyOtpRequest
+	if !rt.DecodeAndValidate(w, r, log, span, &body) {
+		return
+	}
+
+	result, appErr := rt.Services.VerifyOtp(serviceCtx, body.Email, body.Otp)
+	if appErr != nil {
+		rt.WriteAppError(w, log, span, appErr)
+		return
+	}
+
+	log.Info("account verified", slog.String("email", body.Email))
+	rt.WriteJSON(w, http.StatusOK, MessageResponse{Message: result.Message})
+}
+
 // MapUserToRouteDomain mirrors Service.MapUserToServiceDomain: each layer owns
 // the translation into its own domain type.
 func (rt *Routes) MapUserToRouteDomain(user *services.User) UserResponse {
@@ -66,5 +154,6 @@ func (rt *Routes) MapUserToRouteDomain(user *services.User) UserResponse {
 		DateOfBirth:     user.DateOfBirth,
 		ProfilePhotoURL: user.ProfilePhotoURL,
 		Gender:          user.Gender,
+		IsVerified:      user.IsVerified,
 	}
 }

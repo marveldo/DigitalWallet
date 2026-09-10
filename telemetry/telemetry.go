@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 
+	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -14,13 +15,8 @@ type TracerConfig struct {
 	DSN               string
 }
 
-// StartAppTracer returns the tracer shared by the route, service and
-// repository layers.
-//
-// It reads from the global OpenTelemetry provider, and nothing installs one
-// yet — so spans are created and discarded until an exporter is configured
-// here. DSN is carried for that purpose (UPTRACE_DSN) but is not wired up.
-func StartAppTracer(ctx context.Context, cfg TracerConfig) trace.Tracer {
+
+func StartAppTracer(ctx context.Context, cfg TracerConfig) (trace.Tracer, func(context.Context) error) {
 	name := cfg.AppServiceName
 	if name == "" {
 		name = cfg.AppName
@@ -29,9 +25,19 @@ func StartAppTracer(ctx context.Context, cfg TracerConfig) trace.Tracer {
 		name = "eda-monolith"
 	}
 
+	shutdown := func(context.Context) error { return nil }
+	if cfg.DSN != "" {
+		uptrace.ConfigureOpentelemetry(
+			uptrace.WithDSN(cfg.DSN),
+			uptrace.WithServiceName(name),
+			uptrace.WithServiceVersion(cfg.AppServiceVersion),
+		)
+		shutdown = uptrace.Shutdown
+	}
+
 	opts := []trace.TracerOption{}
 	if cfg.AppServiceVersion != "" {
 		opts = append(opts, trace.WithInstrumentationVersion(cfg.AppServiceVersion))
 	}
-	return otel.Tracer(name, opts...)
+	return otel.Tracer(name, opts...), shutdown
 }
