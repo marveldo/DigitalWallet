@@ -82,22 +82,6 @@ func NewEmailWorker(cfg *EmailWorkerConfig) *EmailWorker {
 		Sender:     sender,
 	}
 }
-
-// EnqueueEmail is the typed entry point callers should use: it marshals the
-// payload and puts the task on the queue this worker's server consumes.
-func (w *EmailWorker) EnqueueEmail(ctx context.Context, payload EmailPayload) (*asynq.TaskInfo, error) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshalling email payload: %w", err)
-	}
-	task := w.GenerateNewTask(TaskTypeEmailSend, body)
-	info := w.EnqueueWithContext(task, ctx)
-	if info == nil {
-		return nil, fmt.Errorf("could not enqueue %s task", TaskTypeEmailSend)
-	}
-	return info, nil
-}
-
 // EnqueueWithContext pushes a task onto the queue. It returns nil when the
 // enqueue fails: a queued email is not worth taking the process down for, so
 // the failure is logged and the caller decides what to do with a nil info.
@@ -126,8 +110,12 @@ func (w *EmailWorker) EnqueueWithContext(task *asynq.Task, ctx context.Context) 
 	return info
 }
 
-func (w *EmailWorker) GenerateNewTask(name string, payload []byte) *asynq.Task {
-	return asynq.NewTask(name, payload)
+func (w *EmailWorker) GenerateNewTask(name string, payload EmailPayload) (*asynq.Task , error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling email payload: %w", err)
+	}
+	return asynq.NewTask(name, body), nil
 }
 
 // HandleEmailSend processes one task. A returned error tells asynq to retry

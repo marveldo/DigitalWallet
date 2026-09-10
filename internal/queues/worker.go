@@ -11,9 +11,9 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-type Worker interface {
+type Worker[T any] interface {
 	EnqueueWithContext(task *asynq.Task, ctx context.Context) *asynq.TaskInfo
-	GenerateNewTask(name string, payload []byte) *asynq.Task
+	GenerateNewTask(name string, payload T) (*asynq.Task, error)
 }
 
 type AsynqWorkerStruct struct {

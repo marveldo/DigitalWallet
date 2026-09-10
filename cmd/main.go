@@ -9,6 +9,7 @@ import (
 
 	"github/marveldo/eda-monolith/config"
 	"github/marveldo/eda-monolith/internal/api"
+	"github/marveldo/eda-monolith/internal/api/events"
 	"github/marveldo/eda-monolith/internal/api/routes"
 	"github/marveldo/eda-monolith/internal/api/services"
 	"github/marveldo/eda-monolith/internal/queues"
@@ -38,6 +39,7 @@ type StartServicesConfig struct {
 	*repository.Repository
 	trace.Tracer
 	*slog.Logger
+	EventBus *events.EventBus
 }
 
 func main() {
@@ -50,6 +52,7 @@ func main() {
 			StartTracer,
 			StartNewDB,
 			StartNewRepo,
+			StartNewEventBus,
 			StartNewServices,
 			StartNewQueueWorker,
 		),
@@ -229,6 +232,7 @@ func StartNewServices(lc fx.Lifecycle, cfg StartServicesConfig) *services.Servic
 	srvs := services.NewService(&services.ServiceConfig{
 		Repository: cfg.Repository,
 		Logger:     cfg.Logger.With(slog.String("layer", "services")),
+		EventBus:   cfg.EventBus,
 	})
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
@@ -240,7 +244,6 @@ func StartNewServices(lc fx.Lifecycle, cfg StartServicesConfig) *services.Servic
 	})
 	return srvs
 }
-
 
 func StartNewQueueWorker(lc fx.Lifecycle, app_cfg *config.Config, repo *repository.Repository, logger *slog.Logger) (*queues.AsynqWorkerStruct, error) {
 	worker, err := queues.NewAsyncWorker(&queues.AsynqWorkerConfig{
@@ -267,4 +270,19 @@ func StartNewQueueWorker(lc fx.Lifecycle, app_cfg *config.Config, repo *reposito
 		},
 	})
 	return worker, nil
+}
+
+// StartNewEventBus is the in-process, synchronous pub-sub that services emit
+// domain events to. RegisterListeners is what actually reacts to them — this
+// constructor just builds the bus.
+func StartNewEventBus(logger *slog.Logger) *events.EventBus {
+	return events.NewEventBus(&events.EventBusConfig{Logger: logger})
+}
+
+// RegisterListeners wires each domain's subscribers onto the bus. This is the
+// seam between the bus and the queue: the bus itself knows nothing about asynq,
+// and the worker knows nothing about domain events.
+func RegisterListeners(bus *events.EventBus, worker *queues.AsynqWorkerStruct, logger *slog.Logger) {
+	events.RegisterEmailListeners(bus, worker)
+	logger.Info("event listeners registered")
 }

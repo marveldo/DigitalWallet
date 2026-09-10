@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"log/slog"
+
+	"github/marveldo/eda-monolith/internal/api/events"
 	"github/marveldo/eda-monolith/internal/repository"
 
 	"go.opentelemetry.io/otel/trace"
@@ -13,12 +15,14 @@ type Service struct {
 	Repository *repository.Repository
 	*gorm.DB
 	trace.Tracer
-	Logger *slog.Logger
+	Logger   *slog.Logger
+	EventBus *events.EventBus
 }
 
 type ServiceConfig struct {
 	Repository *repository.Repository
 	Logger     *slog.Logger
+	EventBus   *events.EventBus
 }
 
 type ServiceCtx struct {
@@ -36,9 +40,19 @@ type ServiceCtxConfig struct {
 }
 
 func NewService(cfg *ServiceConfig) *Service {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = cfg.Repository.Logger
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Service{
 		Repository: cfg.Repository,
+		DB:         cfg.Repository.DB,
 		Tracer:     cfg.Repository.Tracer,
+		Logger:     logger,
+		EventBus:   cfg.EventBus,
 	}
 }
 
@@ -91,4 +105,12 @@ func (s *Service) GetRepoCtx(cfgs ...ServiceCtxConfig) *repository.RepoCtx {
 		Tracer:  s.Tracer,
 		Span:    span,
 	}
+}
+
+
+func (s *Service) PublishEvent(ctx *ServiceCtx, eventName string, payload any) {
+	if s.EventBus == nil {
+		return
+	}
+	s.EventBus.Publish(ctx.Context, eventName, payload)
 }

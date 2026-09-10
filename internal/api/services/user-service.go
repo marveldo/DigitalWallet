@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github/marveldo/eda-monolith/internal/api/events"
 	"github/marveldo/eda-monolith/internal/repository"
 	"github/marveldo/eda-monolith/shared"
 )
@@ -65,5 +66,17 @@ func (s *Service) CreateUser(ctx *ServiceCtx, userInput *UserInputParam) (*User,
 		return nil, &shared.AppError{Message: "Error Registering User", Err: err, Code: http.StatusInternalServerError}
 	}
 	log.Info("user created", slog.String("user_id", user.ID))
+
+	// Published after the row exists, so every listener can trust the id.
+	// Publish never fails the caller: a welcome email that cannot be queued
+	// must not undo a successful registration.
+	s.PublishEvent(ctx, events.EventUserCreated, events.UserCreatedPayload{
+		UserID:    user.ID,
+		Email:     user.Email,
+		FirstName: user.FirstName,
+		LastName:  user.LastName,
+		CreatedAt: time.Now().UTC(),
+	})
+
 	return s.MapUserToServiceDomain(user), nil
 }
