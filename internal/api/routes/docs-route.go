@@ -25,6 +25,12 @@ var RoutesDocs = []RouteDoc{
 	UserDocs,
 }
 
+// BearerSecurityScheme is the name the OpenAPI document gives the bearer
+// token. GenerateDocs declares it once and each guarded operation references
+// it by this name, which is what renders the padlock and the Authorize button
+// in the UI.
+const BearerSecurityScheme = "bearerAuth"
+
 type GenerateDocsConfig struct {
 	Title       string
 	Version     string
@@ -55,6 +61,10 @@ func GenerateDocs(cfg *GenerateDocsConfig) spec.Generator {
 		option.WithDescription(cfg.Description),
 		// The UI is served by openapi-ui from SetupDocsRoutes, not by spec.
 		option.WithDisableDocs(),
+		option.WithSecurity(BearerSecurityScheme,
+			option.SecurityHTTPBearer("bearer", "JWT"),
+			option.SecurityDescription("Access token from /api/v1/users/login, sent as `Authorization: Bearer <token>`. Refresh tokens are not accepted."),
+		),
 	}
 	if cfg.ServerURL != "" {
 		opts = append(opts, option.WithServer(cfg.ServerURL))

@@ -154,19 +154,128 @@ func (s *Service) VerifyOtp(ctx *ServiceCtx, email string, otpInput string) (*Ac
 	}, nil
 
 }
+func (s *Service) LoginUser(ctx *ServiceCtx, email string, password string) (*LoginSuccessful, *shared.AppError) {
+	ctx, span := ctx.Start("user.login")
+	defer span.End()
 
-// TODO(login): unfinished — placeholder body so the package compiles.
-func (s *Service) LoginUser(ctx *ServiceCtx, email string, password string) {
+	log := ctx.Logger.With(slog.String("service", "user.login"), slog.String("email", email))
+
+	repo_ctx := s.GetRepoCtx(ServiceCtxConfig{Context: ctx.Context, Span: span, Logger: ctx.Logger})
+
+	user, passwordHash, err := s.Repository.GetUserCredentialsByEmail(repo_ctx, email)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			log.Warn("login rejected, no active account for email")
+			return nil, ctx.Fail(&shared.AppError{Err: err, Message: "Invalid Email Or Password", Code: http.StatusUnauthorized})
+		}
+		log.Error("could not load user credentials", slog.Any("error", err))
+		return nil, ctx.Fail(&shared.AppError{Err: err, Message: "Could Not Log User In", Code: http.StatusInternalServerError})
+	}
+
+	if err := CompareHash([]byte(passwordHash), []byte(password)); err != nil {
+		log.Warn("login rejected, password mismatch")
+		return nil, ctx.Fail(&shared.AppError{Err: err, Message: "Invalid Email Or Password", Code: http.StatusUnauthorized})
+	}
+
+	if !user.IsActive {
+		log.Warn("login rejected, account not Active")
+		return nil, ctx.Fail(&shared.AppError{
+			Err:     errors.New("account is not active"),
+			Message: "Account Was Deleted",
+			Code:    http.StatusForbidden,
+		})
+	}
+
+	claims := &ClaimsPayoad{
+		ID:         user.ID,
+		Email:      user.Email,
+		FirstName:  user.FirstName,
+		LastName:   user.LastName,
+		IsVerified: user.IsVerified,
+	}
+
+	accessToken, appErr := s.GenerateAccessToken(ctx, claims)
+	if appErr != nil {
+		return nil, appErr
+	}
+	refreshToken, appErr := s.GenerateRefreshToken(ctx, claims)
+	if appErr != nil {
+		return nil, appErr
+	}
+
+	log.Info("user logged in", slog.String("user_id", user.ID))
+	return &LoginSuccessful{
+		AccessToken:  *accessToken,
+		RefreshToken: *refreshToken,
+		User:         *s.MapUserToServiceDomain(user),
+	}, nil
 }
+// RefreshUserToken trades a valid refresh token for a fresh pair. The account
+// is reloaded rather than trusted from the token's claims, so one deleted or
+// changed since the token was issued cannot keep renewing on stale data.
+func (s *Service) RefreshUserToken(ctx *ServiceCtx, refreshToken string) (*LoginSuccessful, *shared.AppError) {
+	ctx, span := ctx.Start("user.refresh")
+	defer span.End()
+
+	log := ctx.Logger.With(slog.String("service", "user.refresh"))
+
+	userID, appErr := s.ParseRefreshToken(ctx, refreshToken)
+	if appErr != nil {
+		return nil, appErr
+	}
+
+	repo_ctx := s.GetRepoCtx(ServiceCtxConfig{Context: ctx.Context, Span: span, Logger: ctx.Logger})
+
+	user, err := s.Repository.GetUserByID(repo_ctx, userID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			log.Warn("refresh rejected, user no longer exists", slog.String("user_id", userID))
+			return nil, ctx.Fail(&shared.AppError{Err: err, Message: "Invalid Or Expired Refresh Token", Code: http.StatusUnauthorized})
+		}
+		log.Error("could not load user for refresh", slog.Any("error", err))
+		return nil, ctx.Fail(&shared.AppError{Err: err, Message: "Could Not Refresh Token", Code: http.StatusInternalServerError})
+	}
+
+	claims := &ClaimsPayoad{
+		ID:         user.ID,
+		Email:      user.Email,
+		FirstName:  user.FirstName,
+		LastName:   user.LastName,
+		IsVerified: user.IsVerified,
+	}
+
+	accessToken, appErr := s.GenerateAccessToken(ctx, claims)
+	if appErr != nil {
+		return nil, appErr
+	}
+	newRefreshToken, appErr := s.GenerateRefreshToken(ctx, claims)
+	if appErr != nil {
+		return nil, appErr
+	}
+
+	log.Info("tokens refreshed", slog.String("user_id", user.ID))
+	return &LoginSuccessful{
+		AccessToken:  *accessToken,
+		RefreshToken: *newRefreshToken,
+		User:         *s.MapUserToServiceDomain(user),
+	}, nil
+}
+
 func (s *Service) UpdateUser(ctx *ServiceCtx, id string, input *UpdateUserParam) (*User, *shared.AppError) {
 	ctx, span := ctx.Start("user.update")
 	defer span.End()
 
 	log := ctx.Logger.With(slog.String("service", "user.update"), slog.String("user_id", id))
+
+    val_user , val_err := s.ValidatOwner(ctx , id ,  ctx.Value("user_id").(string))
+	if val_err != nil {
+		log.Warn("update conflicts with an existing record")
+		return nil, ctx.Fail(val_err)
+	}
 	repo_ctx := s.GetRepoCtx(ServiceCtxConfig{Context: ctx.Context, Span: span, Logger: ctx.Logger})
 
 	user, err := s.Repository.UpdateUser(repo_ctx, &repository.UserInputParam{
-		ID:              &id,
+		ID:              shared.Ptr(val_user.ID),
 		FirstName:       input.FirstName,
 		LastName:        input.LastName,
 		PhoneNumber:     input.PhoneNumber,
@@ -199,9 +308,17 @@ func (s *Service) DeleteUser(ctx *ServiceCtx, id string) *shared.AppError {
 	defer span.End()
 
 	log := ctx.Logger.With(slog.String("service", "user.delete"), slog.String("user_id", id))
+	
+    val_user , val_err := s.ValidatOwner(ctx , id ,  ctx.Value("user_id").(string))
+	if val_err != nil {
+		log.Warn("update conflicts with an existing record")
+		return ctx.Fail(val_err)
+	}
+
+	
 	repo_ctx := s.GetRepoCtx(ServiceCtxConfig{Context: ctx.Context, Span: span, Logger: ctx.Logger})
 
-	if err := s.Repository.DeleteUser(repo_ctx, id); err != nil {
+	if err := s.Repository.DeleteUser(repo_ctx, val_user.ID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			log.Warn("user not found")
 			return ctx.Fail(&shared.AppError{Message: "User Not Found", Err: err, Code: http.StatusNotFound})

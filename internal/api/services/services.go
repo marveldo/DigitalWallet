@@ -11,6 +11,7 @@ import (
 	"github/marveldo/eda-monolith/internal/otp"
 	"github/marveldo/eda-monolith/internal/repository"
 
+	"github.com/go-chi/jwtauth/v5"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"gorm.io/gorm"
@@ -23,13 +24,19 @@ type Service struct {
 	Logger   *slog.Logger
 	EventBus *events.EventBus
 	*otp.Store
+	*jwtauth.JWTAuth
+	AccessTokenExpiry  uint64
+	RefreshTokenExpiry uint64
 }
 
 type ServiceConfig struct {
-	Repository *repository.Repository
-	Logger     *slog.Logger
-	EventBus   *events.EventBus
-	Store      *otp.Store
+	Repository         *repository.Repository
+	Logger             *slog.Logger
+	EventBus           *events.EventBus
+	Store              *otp.Store
+	SecretKey          string
+	AccessTokenExpiry  uint64
+	RefreshTokenExpiry uint64
 }
 
 type ServiceCtx struct {
@@ -54,6 +61,9 @@ func NewService(cfg *ServiceConfig) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	jwtAuth := NewJwt(&JWTConfig{
+		SecretKey: cfg.SecretKey,
+	})
 	return &Service{
 		Repository: cfg.Repository,
 		DB:         cfg.Repository.DB,
@@ -61,6 +71,19 @@ func NewService(cfg *ServiceConfig) *Service {
 		Logger:     logger,
 		EventBus:   cfg.EventBus,
 		Store:      cfg.Store,
+		JWTAuth:    jwtAuth,
+		AccessTokenExpiry: func() uint64 {
+          if cfg.AccessTokenExpiry < 1 {
+			return 1
+		  }
+		  return uint64(cfg.AccessTokenExpiry)
+		}(),
+		RefreshTokenExpiry: func () uint64 {
+			if cfg.RefreshTokenExpiry < 1 {
+				return 24
+			}
+			return uint64(cfg.RefreshTokenExpiry)
+		}(),
 	}
 }
 

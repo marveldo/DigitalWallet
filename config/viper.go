@@ -138,6 +138,18 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		}(),
 	}
 
+	jwtConfig := JWTConfig{
+		SecretKey: func() string {
+			key := v.GetString("JWT_SECRET_KEY")
+			if key == "" {
+				panic("JWT_SECRET_KEY is not set: refusing to sign tokens with an empty key, anyone could forge one")
+			}
+			return key
+		}(),
+		AccessTokenExpiry:  uint64(v.GetInt("JWT_ACCESS_TOKEN_EXPIRY_HOURS")),
+		RefreshTokenExpiry: uint64(v.GetInt("JWT_REFRESH_TOKEN_EXPIRY_HOURS")),
+	}
+
 	return &Config{
 		Database:         databaseConfig,
 		Uptrace:          uptraceConfig,
@@ -148,6 +160,7 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		ResendKey:        v.GetString("RESEND_API_KEY"),
 		EmailProvider:    v.GetString("EMAIL_PROVIDER"),
 		OTP:              otpConfig,
+		JWT:              jwtConfig,
 	}
 }
 

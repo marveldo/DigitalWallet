@@ -235,6 +235,10 @@ func StartNewServices(lc fx.Lifecycle, cfg StartServicesConfig) *services.Servic
 		Logger:     cfg.Logger.With(slog.String("layer", "services")),
 		EventBus:   cfg.EventBus,
 		Store:      cfg.Store,
+
+		SecretKey:          cfg.Config.JWT.SecretKey,
+		AccessTokenExpiry:  cfg.Config.JWT.AccessTokenExpiry,
+		RefreshTokenExpiry: cfg.Config.JWT.RefreshTokenExpiry,
 	})
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {

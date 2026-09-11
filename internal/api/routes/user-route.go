@@ -98,6 +98,60 @@ func (rt *Routes) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	rt.WriteJSON(w, http.StatusNoContent, nil)
 }
 
+func (rt *Routes) Login(w http.ResponseWriter, r *http.Request) {
+	log := rt.RequestLogger("user.login")
+	serviceCtx, span := rt.GetServiceCtx(r.Context(), "user.login")
+	if span != nil {
+		defer span.End()
+	}
+
+	var body LoginRequest
+	if !rt.DecodeAndValidate(w, r, log, span, &body) {
+		return
+	}
+
+	result, appErr := rt.Services.LoginUser(serviceCtx, body.Email, body.Password)
+	if appErr != nil {
+		rt.WriteAppError(w, log, span, appErr)
+		return
+	}
+
+	log.Info("user logged in", slog.String("user_id", result.User.ID))
+	rt.WriteJSON(w, http.StatusOK, LoginResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		TokenType:    "Bearer",
+		User:         rt.MapUserToRouteDomain(&result.User),
+	})
+}
+
+func (rt *Routes) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	log := rt.RequestLogger("user.refresh")
+	serviceCtx, span := rt.GetServiceCtx(r.Context(), "user.refresh")
+	if span != nil {
+		defer span.End()
+	}
+
+	var body RefreshTokenRequest
+	if !rt.DecodeAndValidate(w, r, log, span, &body) {
+		return
+	}
+
+	result, appErr := rt.Services.RefreshUserToken(serviceCtx, body.RefreshToken)
+	if appErr != nil {
+		rt.WriteAppError(w, log, span, appErr)
+		return
+	}
+
+	log.Info("tokens refreshed", slog.String("user_id", result.User.ID))
+	rt.WriteJSON(w, http.StatusOK, LoginResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		TokenType:    "Bearer",
+		User:         rt.MapUserToRouteDomain(&result.User),
+	})
+}
+
 func (rt *Routes) ResendOtp(w http.ResponseWriter, r *http.Request) {
 	log := rt.RequestLogger("user.otp.resend")
 	serviceCtx, span := rt.GetServiceCtx(r.Context(), "user.otp.resend")

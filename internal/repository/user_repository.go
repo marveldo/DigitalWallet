@@ -49,6 +49,23 @@ func (r *UserRepository) GetUserByEmail(ctx *RepoCtx, email string) (*User, erro
 	return r.MapUserModelToUser(&userModel), nil
 }
 
+
+func (r *UserRepository) GetUserCredentialsByEmail(ctx *RepoCtx, email string) (*User, string, error) {
+	ctx, span := ctx.Start("user.get_credentials_by_email")
+	defer span.End()
+	conn := ctx.DB
+	var userModel db.User
+	err := conn.WithContext(ctx.Context).Where("email = ? AND is_active = ?", email, true).First(&userModel).Error
+	if err != nil {
+		return nil, "", ctx.LogError("user.get_credentials_by_email", err)
+	}
+	var hash string
+	if userModel.Passwordhash != nil {
+		hash = *userModel.Passwordhash
+	}
+	return r.MapUserModelToUser(&userModel), hash, nil
+}
+
 func (r *UserRepository) GetUserByID(ctx *RepoCtx, id string) (*User, error) {
 	ctx, span := ctx.Start("user.get_by_id")
 	defer span.End()
@@ -197,5 +214,6 @@ func (r *UserRepository) MapUserModelToUser(userModel *db.User) *User {
 		ProfilePhotoURL: userModel.ProfilePhotoURL,
 		Gender:          string(userModel.Gender),
 		IsVerified:      userModel.IsVerified,
+		IsActive:        userModel.IsActive,
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/go-chi/jwtauth/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/oaswrap/spec"
 	"go.opentelemetry.io/otel/trace"
@@ -98,9 +99,18 @@ func SetupRoutes(cfg SetupRoutesConfigParams) *Routes {
 			v1.Post("/users", routes.CreateUser)
 			v1.Post("/users/otp/resend", routes.ResendOtp)
 			v1.Post("/users/otp/verify", routes.VerifyOtp)
-			v1.Patch("/users/{id}", routes.UpdateUser)
-			v1.Delete("/users/{id}", routes.DeleteUser)
-		})
+			v1.Post("/users/login", routes.Login)
+			v1.Post("/users/token/refresh", routes.RefreshToken)
+			
+            v1.Group(func(m chi.Router) {
+		        m.Use(jwtauth.Verifier(routes.Services.JWTAuth))
+			    m.Use(routes.Authenticator)
+			    m.Use(routes.AuthMiddleWare)
+			    m.Patch("/users/{id}", routes.UpdateUser)
+                m.Delete("/users/{id}", routes.DeleteUser)
+		   })
+	    })
+
 	})
 	return routes
 }

@@ -35,6 +35,7 @@ type User struct {
 type LoginSuccessful struct {
 	AccessToken  string
 	RefreshToken string
+	User         User
 }
 
 type ResendOtpOk struct {

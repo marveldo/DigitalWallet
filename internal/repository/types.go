@@ -12,6 +12,7 @@ type User struct {
 	ProfilePhotoURL *string
 	Gender          string
 	IsVerified      bool
+	IsActive        bool
 }
 
 type UserFilters struct {

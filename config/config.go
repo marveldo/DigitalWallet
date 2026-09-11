@@ -12,6 +12,13 @@ type Config struct {
 	ResendKey        string
 	EmailProvider    string
 	OTP              OTPConfig
+	JWT              JWTConfig
+}
+
+type JWTConfig struct {
+	SecretKey          string
+	AccessTokenExpiry  uint64
+	RefreshTokenExpiry uint64
 }
 
 type OTPConfig struct {

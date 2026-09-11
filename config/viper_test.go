@@ -46,6 +46,9 @@ func TestGetConfigFromViper(t *testing.T) {
 	v.Set("ASYNC_REDIS_URL", "redis://localhost:6379/1")
 	v.Set("ASYNC_REDIS_NAMESPACE", "eda")
 	v.Set("ALLOWED_ORIGINS", []string{"http://localhost:3000", "https://example.com"})
+	v.Set("JWT_SECRET_KEY", "test-signing-key")
+	v.Set("JWT_ACCESS_TOKEN_EXPIRY_HOURS", 2)
+	v.Set("JWT_REFRESH_TOKEN_EXPIRY_HOURS", 48)
 
 	want := &Config{
 		Database: DatabaseConfig{
@@ -60,6 +63,9 @@ func TestGetConfigFromViper(t *testing.T) {
 			RedisUrl: "redis://localhost:6379/1", RedisNamespace: "eda",
 		},
 		AllowedOrigins: []string{"http://localhost:3000", "https://example.com"},
+		JWT: JWTConfig{
+			SecretKey: "test-signing-key", AccessTokenExpiry: 2, RefreshTokenExpiry: 48,
+		},
 	}
 
 	if got := GetConfigFromViper(v); !reflect.DeepEqual(got, want) {
@@ -68,12 +74,17 @@ func TestGetConfigFromViper(t *testing.T) {
 }
 
 func TestGetConfigFromViperDefaults(t *testing.T) {
-	got := GetConfigFromViper(viper.New())
+	v := viper.New()
+	// JWT_SECRET_KEY has no default: GetConfigFromViper panics without it.
+	v.Set("JWT_SECRET_KEY", "test-signing-key")
+
+	got := GetConfigFromViper(v)
 	want := &Config{
 		BackgroundWorker: AsynqBackgroundWorker{
 			RedisUrl: "redis://localhost:6379", RedisNamespace: "asynq",
 		},
 		AllowedOrigins: []string{"http://localhost:3000"},
+		JWT:            JWTConfig{SecretKey: "test-signing-key"},
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -89,4 +100,13 @@ func TestGetAllowedOrigins(t *testing.T) {
 	if got := getAllowedOrigins(v); !reflect.DeepEqual(got, want) {
 		t.Errorf("getAllowedOrigins() = %#v, want %#v", got, want)
 	}
+}
+
+func TestGetConfigFromViperPanicsWithoutJWTSecret(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("GetConfigFromViper() did not panic with JWT_SECRET_KEY unset")
+		}
+	}()
+	GetConfigFromViper(viper.New())
 }
