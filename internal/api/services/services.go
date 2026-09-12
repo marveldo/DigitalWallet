@@ -73,12 +73,12 @@ func NewService(cfg *ServiceConfig) *Service {
 		Store:      cfg.Store,
 		JWTAuth:    jwtAuth,
 		AccessTokenExpiry: func() uint64 {
-          if cfg.AccessTokenExpiry < 1 {
-			return 1
-		  }
-		  return uint64(cfg.AccessTokenExpiry)
+			if cfg.AccessTokenExpiry < 1 {
+				return 1
+			}
+			return uint64(cfg.AccessTokenExpiry)
 		}(),
-		RefreshTokenExpiry: func () uint64 {
+		RefreshTokenExpiry: func() uint64 {
 			if cfg.RefreshTokenExpiry < 1 {
 				return 24
 			}

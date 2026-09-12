@@ -204,12 +204,19 @@ func (s *Service) LoginUser(ctx *ServiceCtx, email string, password string) (*Lo
 	}
 
 	log.Info("user logged in", slog.String("user_id", user.ID))
+	s.PublishEvent(ctx, events.EventUserLoggedIn, events.UserLoggedInPayload{
+		UserID:    user.ID,
+		Email:     user.Email,
+		FirstName: user.FirstName,
+		LastName:  user.LastName,
+	})
 	return &LoginSuccessful{
 		AccessToken:  *accessToken,
 		RefreshToken: *refreshToken,
 		User:         *s.MapUserToServiceDomain(user),
 	}, nil
 }
+
 // RefreshUserToken trades a valid refresh token for a fresh pair. The account
 // is reloaded rather than trusted from the token's claims, so one deleted or
 // changed since the token was issued cannot keep renewing on stale data.
@@ -267,7 +274,7 @@ func (s *Service) UpdateUser(ctx *ServiceCtx, id string, input *UpdateUserParam)
 
 	log := ctx.Logger.With(slog.String("service", "user.update"), slog.String("user_id", id))
 
-    val_user , val_err := s.ValidatOwner(ctx , id ,  ctx.Value("user_id").(string))
+	val_user, val_err := s.ValidatOwner(ctx, id, ctx.Value("user_id").(string))
 	if val_err != nil {
 		log.Warn("update conflicts with an existing record")
 		return nil, ctx.Fail(val_err)
@@ -308,14 +315,13 @@ func (s *Service) DeleteUser(ctx *ServiceCtx, id string) *shared.AppError {
 	defer span.End()
 
 	log := ctx.Logger.With(slog.String("service", "user.delete"), slog.String("user_id", id))
-	
-    val_user , val_err := s.ValidatOwner(ctx , id ,  ctx.Value("user_id").(string))
+
+	val_user, val_err := s.ValidatOwner(ctx, id, ctx.Value("user_id").(string))
 	if val_err != nil {
 		log.Warn("update conflicts with an existing record")
 		return ctx.Fail(val_err)
 	}
 
-	
 	repo_ctx := s.GetRepoCtx(ServiceCtxConfig{Context: ctx.Context, Span: span, Logger: ctx.Logger})
 
 	if err := s.Repository.DeleteUser(repo_ctx, val_user.ID); err != nil {

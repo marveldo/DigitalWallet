@@ -23,6 +23,7 @@ type RouteDoc func(spec.Router)
 var RoutesDocs = []RouteDoc{
 	HealthDocs,
 	UserDocs,
+	ActivityDocs,
 }
 
 // BearerSecurityScheme is the name the OpenAPI document gives the bearer

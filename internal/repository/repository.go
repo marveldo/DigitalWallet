@@ -10,6 +10,7 @@ import (
 
 type Repository struct {
 	*UserRepository
+	*ActivityRepository
 	*gorm.DB
 	trace.Tracer
 	Logger *slog.Logger
@@ -31,6 +32,7 @@ type RepoctxConfig struct {
 
 func NewRepository(cfg *RepoConfig) *Repository {
 	user_repo := NewUserRepo(&UserRepositoryConfig{})
+	activity_repo := NewActivityRepository(&ActivityRepositoryConfig{})
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -40,6 +42,7 @@ func NewRepository(cfg *RepoConfig) *Repository {
 		Tracer:         cfg.Tracer,
 		Logger:         logger,
 		UserRepository: &user_repo,
+        ActivityRepository: &activity_repo,
 	}
 }
 
@@ -53,7 +56,7 @@ type RepoCtx struct {
 
 func (r *Repository) NewRepoCtx(cfgs ...RepoctxConfig) *RepoCtx {
 	context := context.Background()
-	var db *gorm.DB
+	db := r.DB
 	var span trace.Span
 	var tracer trace.Tracer
 	logger := r.Logger

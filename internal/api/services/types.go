@@ -45,3 +45,41 @@ type ResendOtpOk struct {
 type AccountVerificationOk struct {
 	Message string
 }
+
+type Activity struct {
+	ID        uint
+	UserID    string
+	Action    string
+	CreatedAt string
+}
+
+// ActivityPageParam is the raw, untrusted paging request. Normalise clamps it
+// into something safe to send to the database.
+type ActivityPageParam struct {
+	Limit  *int
+	Offset *int
+}
+
+func (p *ActivityPageParam) Normalise() (limit int, offset int) {
+	limit = DefaultActivityLimit
+	if p != nil && p.Limit != nil {
+		limit = *p.Limit
+	}
+	if limit < 1 {
+		limit = DefaultActivityLimit
+	}
+	if limit > MaxActivityLimit {
+		limit = MaxActivityLimit
+	}
+	if p != nil && p.Offset != nil && *p.Offset > 0 {
+		offset = *p.Offset
+	}
+	return limit, offset
+}
+
+type ActivityList struct {
+	Activities []Activity
+	Total      int64
+	Limit      int
+	Offset     int
+}

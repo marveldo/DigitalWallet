@@ -41,3 +41,10 @@ type UserInputParam struct {
 	Gender          *string
 	IsVerified      *bool
 }
+
+type Activity struct {
+	Id  uint
+	UserID string
+	CreatedAt string
+	Action   string
+}

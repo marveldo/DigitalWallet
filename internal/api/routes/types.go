@@ -65,3 +65,17 @@ type UpdateUserRequest struct {
 type HealthResponse struct {
 	Status string `json:"status" example:"ok"`
 }
+
+type ActivityResponse struct {
+	ID        uint   `json:"id"`
+	UserID    string `json:"user_id"`
+	Action    string `json:"action" example:"Logged Into Account"`
+	CreatedAt string `json:"created_at" example:"2026-09-12T14:30:00Z"`
+}
+
+type ActivityListResponse struct {
+	Activities []ActivityResponse `json:"activities"`
+	Total      int64              `json:"total" description:"Total activities on the account, ignoring paging"`
+	Limit      int                `json:"limit"`
+	Offset     int                `json:"offset"`
+}

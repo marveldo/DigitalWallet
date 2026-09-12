@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github/marveldo/eda-monolith/internal/repository"
+	"github/marveldo/eda-monolith/internal/templates"
 
 	"github.com/hibiken/asynq"
 )
@@ -35,20 +36,6 @@ type EmailSender interface {
 	Send(ctx context.Context, payload EmailPayload, body string) error
 }
 
-type LogEmailSender struct {
-	Logger *slog.Logger
-}
-
-func (s *LogEmailSender) Send(ctx context.Context, payload EmailPayload, body string) error {
-	s.Logger.WarnContext(ctx, "no email provider configured, email not sent",
-		slog.Any("to", payload.To),
-		slog.String("subject", payload.Subject),
-		slog.String("template", payload.Template),
-		slog.Int("body_bytes", len(body)),
-	)
-	return nil
-}
-
 type EmailWorker struct {
 	*asynq.Client
 	*repository.Repository
@@ -73,9 +60,7 @@ func NewEmailWorker(cfg *EmailWorkerConfig) *EmailWorker {
 	logger = logger.With(slog.String("worker", "email"))
 
 	sender := cfg.Sender
-	if sender == nil {
-		sender = &LogEmailSender{Logger: logger}
-	}
+
 	return &EmailWorker{
 		Client:     cfg.Client,
 		Repository: cfg.Repository,
@@ -86,33 +71,11 @@ func NewEmailWorker(cfg *EmailWorkerConfig) *EmailWorker {
 }
 
 func (w *EmailWorker) EnqueueWithContext(task *asynq.Task, ctx context.Context) (*asynq.TaskInfo, error) {
-	opts := []asynq.Option{asynq.MaxRetry(3)}
-	if w.Queue != "" {
-		opts = append(opts, asynq.Queue(w.Queue))
-	}
-
-	info, err := w.Client.EnqueueContext(ctx, task, opts...)
-	if err != nil {
-		w.Logger.ErrorContext(ctx, "failed to push task to redis",
-			slog.String("task_type", task.Type()),
-			slog.Any("error", err),
-		)
-		return nil, fmt.Errorf("enqueue %s: %w", task.Type(), err)
-	}
-	w.Logger.InfoContext(ctx, "task enqueued",
-		slog.String("task_id", info.ID),
-		slog.String("task_type", task.Type()),
-		slog.String("queue", info.Queue),
-	)
-	return info, nil
+	return EnqueueWithContext(task, ctx, w.Queue, w.Client, w.Logger)
 }
 
 func (w *EmailWorker) GenerateNewTask(name string, payload EmailPayload) (*asynq.Task, error) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshalling email payload: %w", err)
-	}
-	return asynq.NewTask(name, body), nil
+	return GenerateNewTask[EmailPayload](name, payload)
 }
 
 func (w *EmailWorker) HandleEmailSend(ctx context.Context, task *asynq.Task) error {
@@ -128,7 +91,7 @@ func (w *EmailWorker) HandleEmailSend(ctx context.Context, task *asynq.Task) err
 		slog.String("template", payload.Template),
 	)
 
-	body, err := RenderEmail(payload.Template, payload)
+	body, err := templates.RenderEmail(payload.Template, payload)
 	if err != nil {
 		log.ErrorContext(ctx, "could not render email template", slog.Any("error", err))
 		return fmt.Errorf("%w: %v", asynq.SkipRetry, err)

@@ -198,12 +198,16 @@ func StartNewDB(lc fx.Lifecycle, app_cfg *config.Config, logger *slog.Logger) *g
 	} else {
 		migrationModels := []any{
 			&dbmodels.User{},
+			&dbmodels.Wallet{},
+			&dbmodels.UserActivity{},
+			&dbmodels.LedgerEntries{},
+			&dbmodels.LedgerLines{},
 		}
-		for _, model := range migrationModels {
-			if err := db.AutoMigrate(model); err != nil {
+		
+		if err := db.AutoMigrate(migrationModels...); err != nil {
 				panic(err)
 			}
-		}
+		
 	}
 
 	lc.Append(fx.Hook{
@@ -327,5 +331,6 @@ func StartNewEventBus(logger *slog.Logger, tracer trace.Tracer) *events.EventBus
 
 func RegisterListeners(bus *events.EventBus, worker *queues.AsynqWorkerStruct, logger *slog.Logger, otpStore *otp.Store) {
 	events.RegisterEmailListeners(bus, worker.EmailWorker, otpStore)
+	events.RegisterActivityListeners(bus, worker.ActivityWorker)
 	logger.Info("event listeners registered")
 }

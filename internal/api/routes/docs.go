@@ -94,3 +94,17 @@ func UserDocs(r spec.Router) {
 		option.Response(http.StatusInternalServerError, new(ErrorResponse)),
 	)
 }
+func ActivityDocs(r spec.Router) {
+	r.Get("/api/v1/me/activity",
+		option.OperationID("me-activity-list"),
+		option.Summary("List my activities"),
+		option.Description("Returns the authenticated user's activity history, newest first. The account is read from the access token, so a caller can only ever see their own activities. Paging is controlled with the limit and offset query parameters; limit defaults to 20 and is capped at 100."),
+		option.Tags("Activities"),
+		option.Security(BearerSecurityScheme),
+		option.Response(http.StatusOK, new(ActivityListResponse)),
+		option.Response(http.StatusBadRequest, new(ErrorResponse)),
+		option.Response(http.StatusUnauthorized, new(ErrorResponse)),
+		option.Response(http.StatusNotFound, new(ErrorResponse)),
+		option.Response(http.StatusInternalServerError, new(ErrorResponse)),
+	)
+}

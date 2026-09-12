@@ -15,6 +15,30 @@ const (
 	GenderOther  Gender = "OTHER"
 )
 
+type LedgerType string
+
+const (
+	Deposit    LedgerType = "DEPOSIT"
+	Transfer   LedgerType = "TRANSFER"
+	Withdrawal LedgerType = "WITHDRAWAL"
+	Fee        LedgerType = "FEE"
+)
+
+type WalletStatus string
+
+const (
+	WalletActive WalletStatus = "ACTIVE"
+	WallteFrozen WalletStatus = "FROZEN"
+	WalletClosed WalletStatus = "CLOSED"
+)
+
+type Direction string
+
+const (
+	Credit Direction = "CR"
+	Debit  Direction = "DR"
+)
+
 type Currency string
 
 const (
@@ -37,11 +61,12 @@ type User struct {
 	LastName        string     `gorm:"type:varchar(100);not null"`
 	Email           string     `gorm:"type:varchar(100);unique;not null"`
 	Passwordhash    *string    `gorm:"type:varchar(255);not null"`
-	PhoneNumber     *string    `gorm:"type:varchar(20);unique"`
+	PhoneNumber     *string    `gorm:"type:varchar(20)"`
 	DateOfBirth     *time.Time `gorm:"type:date"`
 	ProfilePhotoURL *string
 	Gender          Gender `gorm:"type:varchar(10);not null;default:'OTHER'"`
 	Wallets         []Wallet
+	Activities      []UserActivity
 	IsActive        bool `gorm:"type:boolean;not null;default:true"`
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
@@ -57,10 +82,11 @@ func (u *User) BeforeCreate(tx *gorm.DB) error {
 }
 
 type Wallet struct {
-	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
-	UserID    uuid.UUID `gorm:"type:uuid;not null;index"`
-	Balance   float64   `gorm:"type:decimal(10,2);not null;default:0.00"`
-	Currency  Currency  `gorm:"type:varchar(3);not null;default:'USD'"`
+	ID        uuid.UUID    `gorm:"type:uuid;primaryKey"`
+	UserID    uuid.UUID    `gorm:"type:uuid;not null;index"`
+	Balance   float64      `gorm:"type:decimal(10,2);not null;default:0.00"`
+	Currency  Currency     `gorm:"type:varchar(3);not null;default:'USD'"`
+	Status    WalletStatus `gorm:"type:varchar(10); not null;default:'ACTIVE'"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`
@@ -71,4 +97,25 @@ func (w *Wallet) BeforeCreate(tx *gorm.DB) error {
 		w.ID = uuid.New()
 	}
 	return nil
+}
+
+type UserActivity struct {
+	gorm.Model
+	UserID uuid.UUID `gorm:"type:uuid;not null;index"`
+	Action string    `gorm:"type:text;not null;"`
+}
+
+type LedgerEntries struct {
+	gorm.Model
+	Description string     `gorm:"type:text;not null"`
+	ReferenceID string     `gorm:"type:varchar(256); not null"`
+	Type        LedgerType `gorm:"type:varchar(50); not null"`
+}
+
+type LedgerLines struct {
+	gorm.Model
+	EntryID   uint      `gorm:"type:bigint;not null;index"`
+	WalletID  uuid.UUID `gorm:"type:uuid; not null; index"`
+	Amount    float64   `gorm:"type:decimal(10,2); not null"`
+	Direction Direction `gorm:"type:varchar(5); not null"`
 }

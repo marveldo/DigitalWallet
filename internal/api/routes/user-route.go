@@ -7,9 +7,7 @@ import (
 	"github/marveldo/eda-monolith/internal/api/services"
 
 	"github.com/go-chi/chi/v5"
-
 )
-
 
 func (rt *Routes) CreateUser(w http.ResponseWriter, r *http.Request) {
 	log := rt.RequestLogger("user.create")

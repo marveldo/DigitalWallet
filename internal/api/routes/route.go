@@ -101,15 +101,16 @@ func SetupRoutes(cfg SetupRoutesConfigParams) *Routes {
 			v1.Post("/users/otp/verify", routes.VerifyOtp)
 			v1.Post("/users/login", routes.Login)
 			v1.Post("/users/token/refresh", routes.RefreshToken)
-			
-            v1.Group(func(m chi.Router) {
-		        m.Use(jwtauth.Verifier(routes.Services.JWTAuth))
-			    m.Use(routes.Authenticator)
-			    m.Use(routes.AuthMiddleWare)
-			    m.Patch("/users/{id}", routes.UpdateUser)
-                m.Delete("/users/{id}", routes.DeleteUser)
-		   })
-	    })
+
+			v1.Group(func(m chi.Router) {
+				m.Use(jwtauth.Verifier(routes.Services.JWTAuth))
+				m.Use(routes.Authenticator)
+				m.Use(routes.AuthMiddleWare)
+				m.Patch("/users/{id}", routes.UpdateUser)
+				m.Delete("/users/{id}", routes.DeleteUser)
+				m.Get("/me/activity", routes.GetMyActivities)
+			})
+		})
 
 	})
 	return routes

@@ -22,6 +22,7 @@ type AsynqWorkerStruct struct {
 	Logger *slog.Logger
 	Queue  string
 	*EmailWorker
+	*ActivityWorker
 }
 
 type AsynqWorkerConfig struct {
@@ -52,7 +53,8 @@ func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	client := NewAsyncClient(connOpts)
+	repository := cfg.Repository
 	asynccfg := asynq.Config{
 		Concurrency: concurrency,
 		Queues:      map[string]int{queueName: 1},
@@ -60,19 +62,27 @@ func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
 	}
 
 	emailWorker := NewEmailWorker(&EmailWorkerConfig{
-		Client:     NewAsyncClient(connOpts),
-		Repository: cfg.Repository,
+		Client:     client,
+		Repository: repository,
 		Logger:     logger,
 		Queue:      queueName,
 		Sender:     cfg.Sender,
 	})
 
+	activityWorker := NewActivityWorker(&ActivityWorkerConfig{
+		Client:     client,
+		Repository: repository,
+		Logger:     logger,
+		Queue:      queueName,
+	})
+
 	w := &AsynqWorkerStruct{
-		srv:         asynq.NewServer(connOpts, asynccfg),
-		mux:         asynq.NewServeMux(),
-		Logger:      logger,
-		Queue:       queueName,
-		EmailWorker: emailWorker,
+		srv:            asynq.NewServer(connOpts, asynccfg),
+		mux:            asynq.NewServeMux(),
+		Logger:         logger,
+		Queue:          queueName,
+		EmailWorker:    emailWorker,
+		ActivityWorker: activityWorker,
 	}
 	w.RegisterHandlers()
 	return w, nil
@@ -107,9 +117,9 @@ func RedisConnOpt(cfg *config.AsynqBackgroundWorker) (asynq.RedisConnOpt, error)
 	return clientOpt, nil
 }
 
-
 func (w *AsynqWorkerStruct) RegisterHandlers() {
 	w.mux.HandleFunc(TaskTypeEmailSend, w.EmailWorker.HandleEmailSend)
+	w.mux.HandleFunc(UpdateUserActivity, w.ActivityWorker.HandleCreateActivity)
 }
 
 func (w *AsynqWorkerStruct) Start() error {
@@ -119,7 +129,6 @@ func (w *AsynqWorkerStruct) Start() error {
 	w.Logger.Info("starting queue worker", slog.String("queue", w.Queue))
 	return w.srv.Start(w.mux)
 }
-
 
 func (w *AsynqWorkerStruct) Shutdown() {
 	w.Logger.Info("shutting down queue worker", slog.String("queue", w.Queue))
