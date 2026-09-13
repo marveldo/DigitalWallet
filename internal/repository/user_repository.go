@@ -49,7 +49,6 @@ func (r *UserRepository) GetUserByEmail(ctx *RepoCtx, email string) (*User, erro
 	return r.MapUserModelToUser(&userModel), nil
 }
 
-
 func (r *UserRepository) GetUserCredentialsByEmail(ctx *RepoCtx, email string) (*User, string, error) {
 	ctx, span := ctx.Start("user.get_credentials_by_email")
 	defer span.End()

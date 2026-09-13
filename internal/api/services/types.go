@@ -1,6 +1,10 @@
 package services
 
-import "time"
+import (
+	"time"
+
+	"github/marveldo/eda-monolith/shared"
+)
 
 type UserInputParam struct {
 	FirstName       string
@@ -82,4 +86,41 @@ type ActivityList struct {
 	Total      int64
 	Limit      int
 	Offset     int
+}
+
+const TimeLayout = time.RFC3339
+
+type InitializeDepositParam struct {
+	Amount   float64
+	Currency string
+}
+
+func (p *InitializeDepositParam) Money() shared.Money {
+	return shared.NewMoney(p.Amount)
+}
+
+type DepositInitialized struct {
+	Reference        string
+	AuthorizationURL string
+	AccessCode       string
+	Amount           shared.Money
+	Currency         string
+	Status           string
+}
+
+type Transaction struct {
+	Reference string
+	UserID    string
+	WalletID  string
+	Amount    shared.Money
+	Status    string
+	Provider  string
+	CreatedAt string
+}
+
+type TransactionList struct {
+	Transactions []Transaction
+	Total        int64
+	Limit        int
+	Offset       int
 }

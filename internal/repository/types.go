@@ -1,6 +1,10 @@
 package repository
 
-import "time"
+import (
+	"time"
+
+	"github/marveldo/eda-monolith/shared"
+)
 
 type User struct {
 	ID              string
@@ -25,7 +29,7 @@ type UserFilters struct {
 type Wallet struct {
 	ID       string
 	UserID   string
-	Balance  float64
+	Balance  shared.Money
 	Currency string
 }
 
@@ -43,8 +47,37 @@ type UserInputParam struct {
 }
 
 type Activity struct {
-	Id  uint
-	UserID string
+	Id        uint
+	UserID    string
 	CreatedAt string
-	Action   string
+	Action    string
+}
+
+type TransactionIntent struct {
+	ID        string
+	UserID    string
+	WalletID  string
+	Amount    shared.Money
+	Status    string
+	Provider  string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type CreateIntentParam struct {
+	UserID   string
+	WalletID string
+	Amount   shared.Money
+	Provider string
+}
+
+type SettleIntentParam struct {
+	Reference   string
+	Amount      shared.Money
+	Description string
+}
+
+type IntentPage struct {
+	Intents []*TransactionIntent
+	Total   int64
 }

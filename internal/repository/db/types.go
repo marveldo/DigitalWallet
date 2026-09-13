@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github/marveldo/eda-monolith/shared"
 	"gorm.io/gorm"
 )
 
@@ -37,6 +38,14 @@ type Direction string
 const (
 	Credit Direction = "CR"
 	Debit  Direction = "DR"
+)
+
+type TransactionStatus string
+
+const (
+	TransactionPending TransactionStatus = "PENDING"
+	TransactionSuccess TransactionStatus = "SUCCESS"
+	TransactionFailed  TransactionStatus = "FAILED"
 )
 
 type Currency string
@@ -84,7 +93,7 @@ func (u *User) BeforeCreate(tx *gorm.DB) error {
 type Wallet struct {
 	ID        uuid.UUID    `gorm:"type:uuid;primaryKey"`
 	UserID    uuid.UUID    `gorm:"type:uuid;not null;index"`
-	Balance   float64      `gorm:"type:decimal(10,2);not null;default:0.00"`
+	Balance   shared.Money `gorm:"type:bigint;not null;default:0"`
 	Currency  Currency     `gorm:"type:varchar(3);not null;default:'USD'"`
 	Status    WalletStatus `gorm:"type:varchar(10); not null;default:'ACTIVE'"`
 	CreatedAt time.Time
@@ -114,8 +123,26 @@ type LedgerEntries struct {
 
 type LedgerLines struct {
 	gorm.Model
-	EntryID   uint      `gorm:"type:bigint;not null;index"`
-	WalletID  uuid.UUID `gorm:"type:uuid; not null; index"`
-	Amount    float64   `gorm:"type:decimal(10,2); not null"`
-	Direction Direction `gorm:"type:varchar(5); not null"`
+	EntryID   uint         `gorm:"type:bigint;not null;index"`
+	WalletID  uuid.UUID    `gorm:"type:uuid; not null; index"`
+	Amount    shared.Money `gorm:"type:bigint;not null"`
+	Direction Direction    `gorm:"type:varchar(5); not null"`
+}
+
+type TransactionIntent struct {
+	ID        uuid.UUID         `gorm:"type:uuid;primaryKey"`
+	UserID    uuid.UUID         `gorm:"type:uuid;not null;index"`
+	Amount    shared.Money      `gorm:"type:bigint;not null"`
+	Status    TransactionStatus `gorm:"type:text;not null;default:'PENDING'"`
+	Wallet    uuid.UUID         `gorm:"type:uuid;not null;index"`
+	Provider  string            `gorm:"type:text;not null"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (t *TransactionIntent) BeforeCreate(tx *gorm.DB) error {
+	if t.ID == uuid.Nil {
+		t.ID = uuid.New()
+	}
+	return nil
 }

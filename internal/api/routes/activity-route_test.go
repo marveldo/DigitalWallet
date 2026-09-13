@@ -55,3 +55,20 @@ func TestActivityInSpec(t *testing.T) {
 		t.Fatal("spec missing /api/v1/me/activity")
 	}
 }
+
+func TestPaymentRoutesInSpec(t *testing.T) {
+	doc, err := GenerateDocs(&GenerateDocsConfig{}).MarshalYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"/api/v1/payments/deposits",
+		"/api/v1/payments/webhook",
+		"/api/v1/me/transactions",
+		"/api/v1/transactions/{reference}",
+	} {
+		if !strings.Contains(string(doc), path) {
+			t.Errorf("spec missing %s", path)
+		}
+	}
+}

@@ -10,14 +10,14 @@ import (
 )
 
 func GenerateNewTask[T any](name string, payload T) (*asynq.Task, error) {
-    body, err := json.Marshal(payload)
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling email payload: %w", err)
 	}
 	return asynq.NewTask(name, body), nil
 }
 
-func EnqueueWithContext(task *asynq.Task, ctx context.Context, queue string , client *asynq.Client, logger *slog.Logger ) (*asynq.TaskInfo, error) {
+func EnqueueWithContext(task *asynq.Task, ctx context.Context, queue string, client *asynq.Client, logger *slog.Logger) (*asynq.TaskInfo, error) {
 	opts := []asynq.Option{asynq.MaxRetry(3)}
 	if queue != "" {
 		opts = append(opts, asynq.Queue(queue))

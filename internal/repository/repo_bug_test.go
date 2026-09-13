@@ -1,15 +1,15 @@
 package repository
 
 import (
+	"errors"
 	"fmt"
-	"os"
-	"strings"
-	"testing"
-    "errors"
 	"github/marveldo/eda-monolith/internal/repository/db"
 	"github/marveldo/eda-monolith/shared"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"os"
+	"strings"
+	"testing"
 )
 
 func pgPass() string {

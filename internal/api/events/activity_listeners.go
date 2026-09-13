@@ -8,10 +8,10 @@ import (
 )
 
 func RegisterActivityListeners(bus *EventBus, worker queues.Worker[queues.ActivityPayload]) {
-	bus.Subscribe(EventUserLoggedIn , func(ctx context.Context, payload any) {
-		ctx , span := bus.StartSpan(ctx , "listener.email.loginalert")
+	bus.Subscribe(EventUserLoggedIn, func(ctx context.Context, payload any) {
+		ctx, span := bus.StartSpan(ctx, "listener.email.loginalert")
 		defer span.End()
-		event , ok := payload.(UserLoggedInPayload)
+		event, ok := payload.(UserLoggedInPayload)
 		if !ok {
 			RecordError(span, fmt.Errorf("unexpected payload type %T for %s", payload, EventUserLoggedIn))
 			bus.Logger.ErrorContext(ctx, "unexpected payload type for event",
@@ -24,7 +24,7 @@ func RegisterActivityListeners(bus *EventBus, worker queues.Worker[queues.Activi
 			slog.String("user_id", event.UserID),
 		)
 
-        task, err := worker.GenerateNewTask(queues.UpdateUserActivity, queues.ActivityPayload{
+		task, err := worker.GenerateNewTask(queues.UpdateUserActivity, queues.ActivityPayload{
 			UserID: event.UserID,
 			Action: "Logged Into Account",
 		})
@@ -33,7 +33,7 @@ func RegisterActivityListeners(bus *EventBus, worker queues.Worker[queues.Activi
 			RecordError(span, err)
 			return
 		}
-        if _, err := worker.EnqueueWithContext(task, ctx); err != nil {
+		if _, err := worker.EnqueueWithContext(task, ctx); err != nil {
 			log.ErrorContext(ctx, "welcome Login Email was not queued", slog.Any("error", err))
 			RecordError(span, err)
 		}

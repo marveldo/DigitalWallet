@@ -7,6 +7,7 @@ import (
 
 	"github/marveldo/eda-monolith/config"
 	"github/marveldo/eda-monolith/internal/repository"
+	"github/marveldo/eda-monolith/shared"
 
 	"github.com/hibiken/asynq"
 )
@@ -23,6 +24,7 @@ type AsynqWorkerStruct struct {
 	Queue  string
 	*EmailWorker
 	*ActivityWorker
+	*PaymentWorker
 }
 
 type AsynqWorkerConfig struct {
@@ -30,6 +32,7 @@ type AsynqWorkerConfig struct {
 	Repository *repository.Repository
 	Logger     *slog.Logger
 	Sender     EmailSender
+	Provider   shared.PaymentProvider
 }
 
 func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
@@ -76,6 +79,16 @@ func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
 		Queue:      queueName,
 	})
 
+	paymentWorker := NewPaymentWorker(&PaymentWorkerConfig{
+		Client:     client,
+		Repository: repository,
+		Logger:     logger,
+		Queue:      queueName,
+		Provider:   cfg.Provider,
+		Email:      emailWorker,
+		Activity:   activityWorker,
+	})
+
 	w := &AsynqWorkerStruct{
 		srv:            asynq.NewServer(connOpts, asynccfg),
 		mux:            asynq.NewServeMux(),
@@ -83,6 +96,7 @@ func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
 		Queue:          queueName,
 		EmailWorker:    emailWorker,
 		ActivityWorker: activityWorker,
+		PaymentWorker:  paymentWorker,
 	}
 	w.RegisterHandlers()
 	return w, nil
@@ -120,6 +134,7 @@ func RedisConnOpt(cfg *config.AsynqBackgroundWorker) (asynq.RedisConnOpt, error)
 func (w *AsynqWorkerStruct) RegisterHandlers() {
 	w.mux.HandleFunc(TaskTypeEmailSend, w.EmailWorker.HandleEmailSend)
 	w.mux.HandleFunc(UpdateUserActivity, w.ActivityWorker.HandleCreateActivity)
+	w.mux.HandleFunc(TaskTypePaymentVerify, w.PaymentWorker.HandleVerifyPayment)
 }
 
 func (w *AsynqWorkerStruct) Start() error {

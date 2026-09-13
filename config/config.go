@@ -12,6 +12,7 @@ type Config struct {
 	ResendKey        string
 	EmailProvider    string
 	OTP              OTPConfig
+	Payment          PaymentConfig
 	JWT              JWTConfig
 }
 
@@ -49,4 +50,11 @@ type AsynqBackgroundWorker struct {
 	Username       string
 	Password       string
 	DB             int
+}
+
+type PaymentConfig struct {
+	Provider    string
+	SecretKey   string
+	BaseURL     string
+	CallbackURL string
 }

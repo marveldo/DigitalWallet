@@ -79,3 +79,33 @@ type ActivityListResponse struct {
 	Limit      int                `json:"limit"`
 	Offset     int                `json:"offset"`
 }
+
+type InitializeDepositRequest struct {
+	Amount   float64 `json:"amount" validate:"required,gt=0" example:"5000.00"`
+	Currency string  `json:"currency,omitempty" validate:"omitempty,len=3" example:"NGN"`
+}
+
+type DepositResponse struct {
+	Reference        string  `json:"reference"`
+	AuthorizationURL string  `json:"authorization_url" description:"Send the user here to complete the payment"`
+	AccessCode       string  `json:"access_code"`
+	Amount           float64 `json:"amount" example:"5000.00"`
+	Currency         string  `json:"currency" example:"NGN"`
+	Status           string  `json:"status" example:"PENDING"`
+}
+
+type TransactionResponse struct {
+	Reference string  `json:"reference"`
+	WalletID  string  `json:"wallet_id"`
+	Amount    float64 `json:"amount" example:"5000.00"`
+	Status    string  `json:"status" example:"SUCCESS"`
+	Provider  string  `json:"provider" example:"paystack"`
+	CreatedAt string  `json:"created_at" example:"2026-09-12T14:30:00Z"`
+}
+
+type TransactionListResponse struct {
+	Transactions []TransactionResponse `json:"transactions"`
+	Total        int64                 `json:"total"`
+	Limit        int                   `json:"limit"`
+	Offset       int                   `json:"offset"`
+}

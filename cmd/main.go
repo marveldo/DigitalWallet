@@ -17,6 +17,7 @@ import (
 	"github/marveldo/eda-monolith/internal/queues"
 	"github/marveldo/eda-monolith/internal/repository"
 	dbmodels "github/marveldo/eda-monolith/internal/repository/db"
+	"github/marveldo/eda-monolith/shared"
 	"github/marveldo/eda-monolith/telemetry"
 
 	"github.com/redis/go-redis/v9"
@@ -42,8 +43,9 @@ type StartServicesConfig struct {
 	*repository.Repository
 	trace.Tracer
 	*slog.Logger
-	EventBus *events.EventBus
-	Store    *otp.Store
+	EventBus        *events.EventBus
+	Store           *otp.Store
+	PaymentProvider shared.PaymentProvider
 }
 
 func main() {
@@ -58,6 +60,7 @@ func main() {
 			StartNewRepo,
 			StartNewRedisClient,
 			StartNewOTPStore,
+			StartNewPaymentProvider,
 			StartNewEventBus,
 			StartNewServices,
 			StartNewQueueWorker,
@@ -202,12 +205,13 @@ func StartNewDB(lc fx.Lifecycle, app_cfg *config.Config, logger *slog.Logger) *g
 			&dbmodels.UserActivity{},
 			&dbmodels.LedgerEntries{},
 			&dbmodels.LedgerLines{},
+			&dbmodels.TransactionIntent{},
 		}
-		
+
 		if err := db.AutoMigrate(migrationModels...); err != nil {
-				panic(err)
-			}
-		
+			panic(err)
+		}
+
 	}
 
 	lc.Append(fx.Hook{
@@ -240,6 +244,9 @@ func StartNewServices(lc fx.Lifecycle, cfg StartServicesConfig) *services.Servic
 		EventBus:   cfg.EventBus,
 		Store:      cfg.Store,
 
+		PaymentProvider:    cfg.PaymentProvider,
+		PaymentCallbackURL: cfg.Config.Payment.CallbackURL,
+
 		SecretKey:          cfg.Config.JWT.SecretKey,
 		AccessTokenExpiry:  cfg.Config.JWT.AccessTokenExpiry,
 		RefreshTokenExpiry: cfg.Config.JWT.RefreshTokenExpiry,
@@ -255,11 +262,31 @@ func StartNewServices(lc fx.Lifecycle, cfg StartServicesConfig) *services.Servic
 	return srvs
 }
 
-func StartNewQueueWorker(lc fx.Lifecycle, app_cfg *config.Config, repo *repository.Repository, logger *slog.Logger, trace trace.Tracer) (*queues.AsynqWorkerStruct, error) {
+func StartNewPaymentProvider(app_cfg *config.Config, logger *slog.Logger, tracer trace.Tracer) shared.PaymentProvider {
+	switch app_cfg.Payment.Provider {
+	case providers.PaystackName:
+		if app_cfg.Payment.SecretKey == "" {
+			logger.Warn("PAYSTACK_SECRET_KEY is not set, payments will be rejected")
+			return nil
+		}
+		return providers.NewPaystackProvider(&providers.PaystackProviderConfig{
+			SecretKey: app_cfg.Payment.SecretKey,
+			BaseURL:   app_cfg.Payment.BaseURL,
+			Logger:    logger,
+			Tracer:    tracer,
+		})
+	default:
+		logger.Warn("no payment provider configured", slog.String("provider", app_cfg.Payment.Provider))
+		return nil
+	}
+}
+
+func StartNewQueueWorker(lc fx.Lifecycle, app_cfg *config.Config, repo *repository.Repository, logger *slog.Logger, trace trace.Tracer, paymentProvider shared.PaymentProvider) (*queues.AsynqWorkerStruct, error) {
 	worker, err := queues.NewAsyncWorker(&queues.AsynqWorkerConfig{
 		Config:     &app_cfg.BackgroundWorker,
 		Repository: repo,
 		Logger:     logger,
+		Provider:   paymentProvider,
 		Sender: func() queues.EmailSender {
 			switch app_cfg.EmailProvider {
 			case "resend":
@@ -332,5 +359,7 @@ func StartNewEventBus(logger *slog.Logger, tracer trace.Tracer) *events.EventBus
 func RegisterListeners(bus *events.EventBus, worker *queues.AsynqWorkerStruct, logger *slog.Logger, otpStore *otp.Store) {
 	events.RegisterEmailListeners(bus, worker.EmailWorker, otpStore)
 	events.RegisterActivityListeners(bus, worker.ActivityWorker)
+	events.RegisterPaymentListeners(bus, worker.PaymentWorker)
+	events.RegisterPaymentActivityListeners(bus, worker.ActivityWorker)
 	logger.Info("event listeners registered")
 }

@@ -27,6 +27,8 @@ type Service struct {
 	*jwtauth.JWTAuth
 	AccessTokenExpiry  uint64
 	RefreshTokenExpiry uint64
+	PaymentProvider    shared.PaymentProvider
+	PaymentCallbackURL string
 }
 
 type ServiceConfig struct {
@@ -37,6 +39,8 @@ type ServiceConfig struct {
 	SecretKey          string
 	AccessTokenExpiry  uint64
 	RefreshTokenExpiry uint64
+	PaymentProvider    shared.PaymentProvider
+	PaymentCallbackURL string
 }
 
 type ServiceCtx struct {
@@ -65,13 +69,15 @@ func NewService(cfg *ServiceConfig) *Service {
 		SecretKey: cfg.SecretKey,
 	})
 	return &Service{
-		Repository: cfg.Repository,
-		DB:         cfg.Repository.DB,
-		Tracer:     cfg.Repository.Tracer,
-		Logger:     logger,
-		EventBus:   cfg.EventBus,
-		Store:      cfg.Store,
-		JWTAuth:    jwtAuth,
+		Repository:         cfg.Repository,
+		DB:                 cfg.Repository.DB,
+		Tracer:             cfg.Repository.Tracer,
+		Logger:             logger,
+		EventBus:           cfg.EventBus,
+		Store:              cfg.Store,
+		JWTAuth:            jwtAuth,
+		PaymentProvider:    cfg.PaymentProvider,
+		PaymentCallbackURL: cfg.PaymentCallbackURL,
 		AccessTokenExpiry: func() uint64 {
 			if cfg.AccessTokenExpiry < 1 {
 				return 1

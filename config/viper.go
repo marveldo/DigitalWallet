@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strings"
 	"time"
 )
 
@@ -150,6 +151,18 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		RefreshTokenExpiry: uint64(v.GetInt("JWT_REFRESH_TOKEN_EXPIRY_HOURS")),
 	}
 
+	paymentConfig := PaymentConfig{
+		Provider: func() string {
+			if v.IsSet("PAYMENT_PROVIDER") {
+				return strings.ToLower(v.GetString("PAYMENT_PROVIDER"))
+			}
+			return "paystack"
+		}(),
+		SecretKey:   v.GetString("PAYSTACK_SECRET_KEY"),
+		BaseURL:     v.GetString("PAYSTACK_BASE_URL"),
+		CallbackURL: v.GetString("PAYMENT_CALLBACK_URL"),
+	}
+
 	return &Config{
 		Database:         databaseConfig,
 		Uptrace:          uptraceConfig,
@@ -160,6 +173,7 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		ResendKey:        v.GetString("RESEND_API_KEY"),
 		EmailProvider:    v.GetString("EMAIL_PROVIDER"),
 		OTP:              otpConfig,
+		Payment:          paymentConfig,
 		JWT:              jwtConfig,
 	}
 }

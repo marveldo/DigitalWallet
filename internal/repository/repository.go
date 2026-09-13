@@ -11,6 +11,7 @@ import (
 type Repository struct {
 	*UserRepository
 	*ActivityRepository
+	*TransactionRepository
 	*gorm.DB
 	trace.Tracer
 	Logger *slog.Logger
@@ -33,16 +34,18 @@ type RepoctxConfig struct {
 func NewRepository(cfg *RepoConfig) *Repository {
 	user_repo := NewUserRepo(&UserRepositoryConfig{})
 	activity_repo := NewActivityRepository(&ActivityRepositoryConfig{})
+	transaction_repo := NewTransactionRepository(&TransactionRepositoryConfig{})
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Repository{
-		DB:             cfg.DB,
-		Tracer:         cfg.Tracer,
-		Logger:         logger,
-		UserRepository: &user_repo,
-        ActivityRepository: &activity_repo,
+		DB:                    cfg.DB,
+		Tracer:                cfg.Tracer,
+		Logger:                logger,
+		UserRepository:        &user_repo,
+		ActivityRepository:    &activity_repo,
+		TransactionRepository: &transaction_repo,
 	}
 }
 
@@ -87,6 +90,17 @@ func (r *Repository) NewRepoCtx(cfgs ...RepoctxConfig) *RepoCtx {
 	}
 }
 
+func (r *Repository) StartTransaction() *gorm.DB {
+	return r.DB.Begin()
+}
+
+func (r *Repository) CommitTransaction(db *gorm.DB) {
+	db.Commit()
+}
+
+func (r *Repository) RollBackTransaction(db *gorm.DB) {
+
+}
 func (c *RepoCtx) Start(op string) (*RepoCtx, trace.Span) {
 	if c.Tracer == nil {
 		return c, trace.SpanFromContext(c.Context)

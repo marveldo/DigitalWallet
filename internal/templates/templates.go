@@ -31,8 +31,9 @@ var emailTemplates = template.Must(
 )
 
 const (
-	EmailWelcome    = "digiwallet"
-	EmailLoginAlert = "login-alert"
+	EmailWelcome        = "digiwallet"
+	EmailLoginAlert     = "login-alert"
+	EmailDepositSuccess = "deposit-success"
 )
 
 // RenderEmail renders the named email template with data. An empty name falls

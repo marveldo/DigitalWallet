@@ -24,6 +24,7 @@ var RoutesDocs = []RouteDoc{
 	HealthDocs,
 	UserDocs,
 	ActivityDocs,
+	PaymentDocs,
 }
 
 // BearerSecurityScheme is the name the OpenAPI document gives the bearer

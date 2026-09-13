@@ -60,10 +60,10 @@ func RegisterEmailListeners(bus *EventBus, worker queues.Worker[queues.EmailPayl
 		}
 	})
 
-	bus.Subscribe(EventUserLoggedIn , func(ctx context.Context, payload any) {
-		ctx , span := bus.StartSpan(ctx , "listener.email.loginalert")
+	bus.Subscribe(EventUserLoggedIn, func(ctx context.Context, payload any) {
+		ctx, span := bus.StartSpan(ctx, "listener.email.loginalert")
 		defer span.End()
-		event , ok := payload.(UserLoggedInPayload)
+		event, ok := payload.(UserLoggedInPayload)
 		if !ok {
 			RecordError(span, fmt.Errorf("unexpected payload type %T for %s", payload, EventUserLoggedIn))
 			bus.Logger.ErrorContext(ctx, "unexpected payload type for event",
@@ -76,7 +76,7 @@ func RegisterEmailListeners(bus *EventBus, worker queues.Worker[queues.EmailPayl
 			slog.String("user_id", event.UserID),
 		)
 
-        task, err := worker.GenerateNewTask(queues.TaskTypeEmailSend, queues.EmailPayload{
+		task, err := worker.GenerateNewTask(queues.TaskTypeEmailSend, queues.EmailPayload{
 			To:        []string{event.Email},
 			Subject:   "Logged Into DigiWallet Account",
 			Template:  templates.EmailLoginAlert,
@@ -92,10 +92,10 @@ func RegisterEmailListeners(bus *EventBus, worker queues.Worker[queues.EmailPayl
 			RecordError(span, err)
 			return
 		}
-        if _, err := worker.EnqueueWithContext(task, ctx); err != nil {
+		if _, err := worker.EnqueueWithContext(task, ctx); err != nil {
 			log.ErrorContext(ctx, "welcome Login Email was not queued", slog.Any("error", err))
 			RecordError(span, err)
 		}
-})
+	})
 
 }

@@ -10,7 +10,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-
 type Handler func(ctx context.Context, payload any)
 
 type EventBus struct {
@@ -31,7 +30,6 @@ func (b *EventBus) StartSpan(ctx context.Context, name string) (context.Context,
 	}
 	return b.Tracer.Start(ctx, name)
 }
-
 
 func RecordError(span trace.Span, err error) {
 	if span == nil || err == nil {

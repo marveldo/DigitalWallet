@@ -101,6 +101,7 @@ func SetupRoutes(cfg SetupRoutesConfigParams) *Routes {
 			v1.Post("/users/otp/verify", routes.VerifyOtp)
 			v1.Post("/users/login", routes.Login)
 			v1.Post("/users/token/refresh", routes.RefreshToken)
+			v1.Post("/payments/webhook", routes.PaymentWebhook)
 
 			v1.Group(func(m chi.Router) {
 				m.Use(jwtauth.Verifier(routes.Services.JWTAuth))
@@ -109,6 +110,9 @@ func SetupRoutes(cfg SetupRoutesConfigParams) *Routes {
 				m.Patch("/users/{id}", routes.UpdateUser)
 				m.Delete("/users/{id}", routes.DeleteUser)
 				m.Get("/me/activity", routes.GetMyActivities)
+				m.Post("/payments/deposits", routes.InitializeDeposit)
+				m.Get("/me/transactions", routes.ListMyTransactions)
+				m.Get("/transactions/{reference}", routes.GetTransaction)
 			})
 		})
 
