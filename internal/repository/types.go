@@ -29,8 +29,8 @@ type UserFilters struct {
 type Wallet struct {
 	ID       string
 	UserID   string
-	Balance  shared.Money
 	Currency string
+	Status   string
 }
 
 type UserInputParam struct {
@@ -69,12 +69,6 @@ type CreateIntentParam struct {
 	WalletID string
 	Amount   shared.Money
 	Provider string
-}
-
-type SettleIntentParam struct {
-	Reference   string
-	Amount      shared.Money
-	Description string
 }
 
 type IntentPage struct {

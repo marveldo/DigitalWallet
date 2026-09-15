@@ -13,6 +13,7 @@ import (
 	"github/marveldo/eda-monolith/internal/api/providers"
 	"github/marveldo/eda-monolith/internal/api/routes"
 	"github/marveldo/eda-monolith/internal/api/services"
+	"github/marveldo/eda-monolith/internal/ledger"
 	"github/marveldo/eda-monolith/internal/otp"
 	"github/marveldo/eda-monolith/internal/queues"
 	"github/marveldo/eda-monolith/internal/repository"
@@ -46,6 +47,7 @@ type StartServicesConfig struct {
 	EventBus        *events.EventBus
 	Store           *otp.Store
 	PaymentProvider shared.PaymentProvider
+	Ledger          *ledger.Ledger
 }
 
 func main() {
@@ -58,6 +60,7 @@ func main() {
 			StartTracer,
 			StartNewDB,
 			StartNewRepo,
+			StartNewLedger,
 			StartNewRedisClient,
 			StartNewOTPStore,
 			StartNewPaymentProvider,
@@ -203,8 +206,6 @@ func StartNewDB(lc fx.Lifecycle, app_cfg *config.Config, logger *slog.Logger) *g
 			&dbmodels.User{},
 			&dbmodels.Wallet{},
 			&dbmodels.UserActivity{},
-			&dbmodels.LedgerEntries{},
-			&dbmodels.LedgerLines{},
 			&dbmodels.TransactionIntent{},
 		}
 
@@ -245,6 +246,7 @@ func StartNewServices(lc fx.Lifecycle, cfg StartServicesConfig) *services.Servic
 		Store:      cfg.Store,
 
 		PaymentProvider:    cfg.PaymentProvider,
+		Ledger:             cfg.Ledger,
 		PaymentCallbackURL: cfg.Config.Payment.CallbackURL,
 
 		SecretKey:          cfg.Config.JWT.SecretKey,
@@ -260,6 +262,25 @@ func StartNewServices(lc fx.Lifecycle, cfg StartServicesConfig) *services.Servic
 		},
 	})
 	return srvs
+}
+
+func StartNewLedger(lc fx.Lifecycle, app_cfg *config.Config, logger *slog.Logger, tracer trace.Tracer) (*ledger.Ledger, error) {
+	l, err := ledger.NewLedger(&ledger.LedgerConfig{
+		ClusterID: app_cfg.TigerBeetle.ClusterID,
+		Addresses: app_cfg.TigerBeetle.Addresses,
+		Tracer:    tracer,
+		Logger:    logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+	lc.Append(fx.Hook{
+		OnStop: func(ctx context.Context) error {
+			l.Close()
+			return nil
+		},
+	})
+	return l, nil
 }
 
 func StartNewPaymentProvider(app_cfg *config.Config, logger *slog.Logger, tracer trace.Tracer) shared.PaymentProvider {
@@ -281,12 +302,15 @@ func StartNewPaymentProvider(app_cfg *config.Config, logger *slog.Logger, tracer
 	}
 }
 
-func StartNewQueueWorker(lc fx.Lifecycle, app_cfg *config.Config, repo *repository.Repository, logger *slog.Logger, trace trace.Tracer, paymentProvider shared.PaymentProvider) (*queues.AsynqWorkerStruct, error) {
+func StartNewQueueWorker(lc fx.Lifecycle, app_cfg *config.Config, repo *repository.Repository, logger *slog.Logger, trace trace.Tracer, paymentProvider shared.PaymentProvider, ledgerClient *ledger.Ledger) (*queues.AsynqWorkerStruct, error) {
 	worker, err := queues.NewAsyncWorker(&queues.AsynqWorkerConfig{
-		Config:     &app_cfg.BackgroundWorker,
-		Repository: repo,
-		Logger:     logger,
-		Provider:   paymentProvider,
+		Config:       &app_cfg.BackgroundWorker,
+		Repository:   repo,
+		Logger:       logger,
+		Provider:     paymentProvider,
+		Ledger:       ledgerClient,
+		PollInterval: app_cfg.Payment.PollInterval,
+		PollMaxRetry: app_cfg.Payment.PollMaxRetries,
 		Sender: func() queues.EmailSender {
 			switch app_cfg.EmailProvider {
 			case "resend":
@@ -360,6 +384,5 @@ func RegisterListeners(bus *events.EventBus, worker *queues.AsynqWorkerStruct, l
 	events.RegisterEmailListeners(bus, worker.EmailWorker, otpStore)
 	events.RegisterActivityListeners(bus, worker.ActivityWorker)
 	events.RegisterPaymentListeners(bus, worker.PaymentWorker)
-	events.RegisterPaymentActivityListeners(bus, worker.ActivityWorker)
 	logger.Info("event listeners registered")
 }

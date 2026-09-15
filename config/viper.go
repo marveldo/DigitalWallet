@@ -139,6 +139,17 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		}(),
 	}
 
+	tigerBeetleConfig := TigerBeetleConfig{
+		ClusterID: v.GetUint64("TB_CLUSTER_ID"),
+		Addresses: func() []string {
+			addresses := v.GetStringSlice("TB_ADDRESSES")
+			if len(addresses) == 0 {
+				return []string{"3000"}
+			}
+			return addresses
+		}(),
+	}
+
 	jwtConfig := JWTConfig{
 		SecretKey: func() string {
 			key := v.GetString("JWT_SECRET_KEY")
@@ -161,6 +172,18 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		SecretKey:   v.GetString("PAYSTACK_SECRET_KEY"),
 		BaseURL:     v.GetString("PAYSTACK_BASE_URL"),
 		CallbackURL: v.GetString("PAYMENT_CALLBACK_URL"),
+		PollInterval: func() time.Duration {
+			if v.IsSet("PAYMENT_POLL_INTERVAL_SECONDS") && v.GetInt("PAYMENT_POLL_INTERVAL_SECONDS") > 0 {
+				return time.Duration(v.GetInt("PAYMENT_POLL_INTERVAL_SECONDS")) * time.Second
+			}
+			return time.Minute
+		}(),
+		PollMaxRetries: func() int {
+			if v.IsSet("PAYMENT_POLL_MAX_RETRIES") && v.GetInt("PAYMENT_POLL_MAX_RETRIES") > 0 {
+				return v.GetInt("PAYMENT_POLL_MAX_RETRIES")
+			}
+			return 30
+		}(),
 	}
 
 	return &Config{
@@ -175,6 +198,7 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		OTP:              otpConfig,
 		Payment:          paymentConfig,
 		JWT:              jwtConfig,
+		TigerBeetle:      tigerBeetleConfig,
 	}
 }
 

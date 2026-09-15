@@ -50,20 +50,13 @@ func ParseMoney(s string) (Money, error) {
 	return NewMoney(major), nil
 }
 
-// Minor returns the amount in minor units - what you send to Paystack.
 func (m Money) Minor() int64 { return int64(m) }
 
-// Major returns the amount in major units, for display only. Do not do
-// arithmetic on the result; add and subtract Money values instead.
 func (m Money) Major() float64 { return float64(m) / minorUnits }
 
 func (m Money) Add(other Money) Money { return m + other }
 
 func (m Money) Sub(other Money) Money { return m - other }
-
-// Neg returns the amount with its sign flipped, for writing the opposite
-// ledger line of a double-entry pair.
-func (m Money) Neg() Money { return -m }
 
 func (m Money) IsZero() bool     { return m == 0 }
 func (m Money) IsPositive() bool { return m > 0 }

@@ -6,14 +6,12 @@ import (
 
 	"github/marveldo/eda-monolith/internal/repository/db"
 
-	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 var (
 	ErrIntentNotPending = errors.New("transaction intent is no longer pending")
-	ErrAmountMismatch   = errors.New("settled amount does not match the intent")
-	ErrWalletNotActive  = errors.New("wallet is not active")
+	ErrIntentSucceeded  = errors.New("transaction intent has already succeeded")
 )
 
 type TransactionRepository struct{}
@@ -41,8 +39,8 @@ func (t *TransactionRepository) MapWalletModelToWallet(model *db.Wallet) *Wallet
 	return &Wallet{
 		ID:       model.ID.String(),
 		UserID:   model.UserID.String(),
-		Balance:  model.Balance,
 		Currency: string(model.Currency),
+		Status:   string(model.Status),
 	}
 }
 
@@ -162,78 +160,46 @@ func (t *TransactionRepository) MarkIntentFailed(ctx *RepoCtx, reference string)
 	return t.MapIntentModelToIntent(&intent), nil
 }
 
-func (t *TransactionRepository) SettleIntent(ctx *RepoCtx, param *SettleIntentParam) (*TransactionIntent, error) {
-	ctx, span := ctx.Start("transaction.settle")
+func (t *TransactionRepository) GetWalletByID(ctx *RepoCtx, walletID string) (*Wallet, error) {
+	ctx, span := ctx.Start("transaction.wallet_by_id")
 	defer span.End()
 
-	parsed, err := ParseUUID(param.Reference)
+	parsed, err := ParseUUID(walletID)
 	if err != nil {
-		return nil, ctx.LogError("transaction.settle", err, slog.String("reference", param.Reference))
+		return nil, ctx.LogError("transaction.wallet_by_id", err, slog.String("wallet_id", walletID))
 	}
 
-	var settled *TransactionIntent
-	err = ctx.DB.WithContext(ctx.Context).Transaction(func(tx *gorm.DB) error {
-		var intent db.TransactionIntent
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ?", parsed).
-			First(&intent).Error
-		if err != nil {
-			return err
-		}
-		if intent.Status != db.TransactionPending {
-			return ErrIntentNotPending
-		}
-		if param.Amount != 0 && param.Amount != intent.Amount {
-			return ErrAmountMismatch
-		}
-
-		var wallet db.Wallet
-		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ?", intent.Wallet).
-			First(&wallet).Error
-		if err != nil {
-			return err
-		}
-		if wallet.Status != db.WalletActive {
-			return ErrWalletNotActive
-		}
-
-		entry := db.LedgerEntries{
-			Description: param.Description,
-			ReferenceID: param.Reference,
-			Type:        db.Deposit,
-		}
-		if err := tx.Create(&entry).Error; err != nil {
-			return err
-		}
-
-		line := db.LedgerLines{
-			EntryID:   entry.ID,
-			WalletID:  wallet.ID,
-			Amount:    intent.Amount,
-			Direction: db.Credit,
-		}
-		if err := tx.Create(&line).Error; err != nil {
-			return err
-		}
-
-		err = tx.Model(&db.Wallet{}).
-			Where("id = ?", wallet.ID).
-			UpdateColumn("balance", gorm.Expr("balance + ?", intent.Amount.Minor())).Error
-		if err != nil {
-			return err
-		}
-
-		intent.Status = db.TransactionSuccess
-		if err := tx.Model(&intent).Update("status", db.TransactionSuccess).Error; err != nil {
-			return err
-		}
-
-		settled = t.MapIntentModelToIntent(&intent)
-		return nil
-	})
-	if err != nil {
-		return nil, ctx.LogError("transaction.settle", err, slog.String("reference", param.Reference))
+	var wallet db.Wallet
+	if err := ctx.DB.WithContext(ctx.Context).Where("id = ?", parsed).First(&wallet).Error; err != nil {
+		return nil, ctx.LogError("transaction.wallet_by_id", err, slog.String("wallet_id", walletID))
 	}
-	return settled, nil
+	return t.MapWalletModelToWallet(&wallet), nil
+}
+
+// MarkIntentSucceeded moves an intent to SUCCESS once the ledger holds the
+// deposit. It is allowed from FAILED as well as PENDING: the provider confirmed
+// the money arrived, and the ledger already credited it, so a poll that gave
+// up earlier must not leave the intent saying otherwise.
+func (t *TransactionRepository) MarkIntentSucceeded(ctx *RepoCtx, reference string) (*TransactionIntent, error) {
+	ctx, span := ctx.Start("transaction.mark_succeeded")
+	defer span.End()
+
+	parsed, err := ParseUUID(reference)
+	if err != nil {
+		return nil, ctx.LogError("transaction.mark_succeeded", err, slog.String("reference", reference))
+	}
+
+	var intent db.TransactionIntent
+	result := ctx.DB.WithContext(ctx.Context).
+		Model(&intent).
+		Clauses(clause.Returning{}).
+		Where("id = ? AND status <> ?", parsed, db.TransactionSuccess).
+		Update("status", db.TransactionSuccess)
+	if result.Error != nil {
+		return nil, ctx.LogError("transaction.mark_succeeded", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return nil, ErrIntentSucceeded
+	}
+	return t.MapIntentModelToIntent(&intent), nil
 }

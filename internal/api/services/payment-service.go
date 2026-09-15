@@ -173,10 +173,12 @@ func (s *Service) HandlePaymentWebhook(ctx *ServiceCtx, signature string, body [
 	}
 
 	s.PublishEvent(ctx, events.EventPaymentWebhookReceived, events.PaymentWebhookPayload{
-		Reference: event.Reference,
-		Provider:  s.PaymentProvider.Name(),
-		Event:     event.Event,
-		Status:    string(event.Status),
+		Reference:   event.Reference,
+		Provider:    s.PaymentProvider.Name(),
+		Event:       event.Event,
+		Status:      string(event.Status),
+		AmountMinor: event.Amount.Minor(),
+		Currency:    event.Currency,
 	})
 
 	log.Info("payment webhook accepted",

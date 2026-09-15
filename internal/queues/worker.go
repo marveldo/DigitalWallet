@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
+
+	"github/marveldo/eda-monolith/internal/ledger"
 
 	"github/marveldo/eda-monolith/config"
 	"github/marveldo/eda-monolith/internal/repository"
@@ -33,6 +36,11 @@ type AsynqWorkerConfig struct {
 	Logger     *slog.Logger
 	Sender     EmailSender
 	Provider   shared.PaymentProvider
+	Ledger     *ledger.Ledger
+	// PollInterval and PollMaxRetry drive the payment verify poller: it checks
+	// the provider every PollInterval, PollMaxRetry times, before giving up.
+	PollInterval time.Duration
+	PollMaxRetry int
 }
 
 func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
@@ -58,12 +66,6 @@ func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
 	}
 	client := NewAsyncClient(connOpts)
 	repository := cfg.Repository
-	asynccfg := asynq.Config{
-		Concurrency: concurrency,
-		Queues:      map[string]int{queueName: 1},
-		Logger:      NewAsynqSlogAdapter(logger),
-	}
-
 	emailWorker := NewEmailWorker(&EmailWorkerConfig{
 		Client:     client,
 		Repository: repository,
@@ -80,14 +82,27 @@ func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
 	})
 
 	paymentWorker := NewPaymentWorker(&PaymentWorkerConfig{
-		Client:     client,
-		Repository: repository,
-		Logger:     logger,
-		Queue:      queueName,
-		Provider:   cfg.Provider,
-		Email:      emailWorker,
-		Activity:   activityWorker,
+		Client:       client,
+		Repository:   repository,
+		Logger:       logger,
+		Queue:        queueName,
+		Provider:     cfg.Provider,
+		Ledger:       cfg.Ledger,
+		Email:        emailWorker,
+		Activity:     activityWorker,
+		PollInterval: cfg.PollInterval,
+		PollMaxRetry: cfg.PollMaxRetry,
 	})
+
+	asynccfg := asynq.Config{
+		Concurrency: concurrency,
+		Queues:      map[string]int{queueName: 1},
+		Logger:      NewAsynqSlogAdapter(logger),
+		RetryDelayFunc: RetryDelay(map[string]time.Duration{
+			TaskTypePaymentPoll: paymentWorker.PollInterval,
+		}),
+		IsFailure: IsFailure,
+	}
 
 	w := &AsynqWorkerStruct{
 		srv:            asynq.NewServer(connOpts, asynccfg),
@@ -134,7 +149,20 @@ func RedisConnOpt(cfg *config.AsynqBackgroundWorker) (asynq.RedisConnOpt, error)
 func (w *AsynqWorkerStruct) RegisterHandlers() {
 	w.mux.HandleFunc(TaskTypeEmailSend, w.EmailWorker.HandleEmailSend)
 	w.mux.HandleFunc(UpdateUserActivity, w.ActivityWorker.HandleCreateActivity)
-	w.mux.HandleFunc(TaskTypePaymentVerify, w.PaymentWorker.HandleVerifyPayment)
+
+	// Only the payment tasks run behind the middleware.
+	w.handlePayment(TaskTypePaymentWebhook, w.PaymentWorker.HandlePaymentWebhook)
+	w.handlePayment(TaskTypePaymentPoll, w.PaymentWorker.HandlePaymentPoll,
+		OnRetriesExhausted(w.PaymentWorker.HandlePollExhausted),
+	)
+}
+
+// handlePayment registers a payment handler behind logging, any extra mws, and
+// panic recovery innermost, so every middleware sees a panic as a failed attempt.
+func (w *AsynqWorkerStruct) handlePayment(pattern string, h asynq.HandlerFunc, mws ...asynq.MiddlewareFunc) {
+	chain := append([]asynq.MiddlewareFunc{LoggingMiddleware(w.PaymentWorker.Logger)}, mws...)
+	chain = append(chain, RecoverMiddleware(w.PaymentWorker.Logger))
+	w.mux.Handle(pattern, Chain(h, chain...))
 }
 
 func (w *AsynqWorkerStruct) Start() error {

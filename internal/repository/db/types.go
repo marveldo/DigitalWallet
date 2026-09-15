@@ -16,28 +16,12 @@ const (
 	GenderOther  Gender = "OTHER"
 )
 
-type LedgerType string
-
-const (
-	Deposit    LedgerType = "DEPOSIT"
-	Transfer   LedgerType = "TRANSFER"
-	Withdrawal LedgerType = "WITHDRAWAL"
-	Fee        LedgerType = "FEE"
-)
-
 type WalletStatus string
 
 const (
 	WalletActive WalletStatus = "ACTIVE"
 	WallteFrozen WalletStatus = "FROZEN"
 	WalletClosed WalletStatus = "CLOSED"
-)
-
-type Direction string
-
-const (
-	Credit Direction = "CR"
-	Debit  Direction = "DR"
 )
 
 type TransactionStatus string
@@ -93,7 +77,6 @@ func (u *User) BeforeCreate(tx *gorm.DB) error {
 type Wallet struct {
 	ID        uuid.UUID    `gorm:"type:uuid;primaryKey"`
 	UserID    uuid.UUID    `gorm:"type:uuid;not null;index"`
-	Balance   shared.Money `gorm:"type:bigint;not null;default:0"`
 	Currency  Currency     `gorm:"type:varchar(3);not null;default:'USD'"`
 	Status    WalletStatus `gorm:"type:varchar(10); not null;default:'ACTIVE'"`
 	CreatedAt time.Time
@@ -112,21 +95,6 @@ type UserActivity struct {
 	gorm.Model
 	UserID uuid.UUID `gorm:"type:uuid;not null;index"`
 	Action string    `gorm:"type:text;not null;"`
-}
-
-type LedgerEntries struct {
-	gorm.Model
-	Description string     `gorm:"type:text;not null"`
-	ReferenceID string     `gorm:"type:varchar(256); not null"`
-	Type        LedgerType `gorm:"type:varchar(50); not null"`
-}
-
-type LedgerLines struct {
-	gorm.Model
-	EntryID   uint         `gorm:"type:bigint;not null;index"`
-	WalletID  uuid.UUID    `gorm:"type:uuid; not null; index"`
-	Amount    shared.Money `gorm:"type:bigint;not null"`
-	Direction Direction    `gorm:"type:varchar(5); not null"`
 }
 
 type TransactionIntent struct {

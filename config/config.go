@@ -14,6 +14,12 @@ type Config struct {
 	OTP              OTPConfig
 	Payment          PaymentConfig
 	JWT              JWTConfig
+	TigerBeetle      TigerBeetleConfig
+}
+
+type TigerBeetleConfig struct {
+	ClusterID uint64
+	Addresses []string
 }
 
 type JWTConfig struct {
@@ -57,4 +63,8 @@ type PaymentConfig struct {
 	SecretKey   string
 	BaseURL     string
 	CallbackURL string
+	// PollInterval is how often a pending deposit is verified with the
+	// provider; after PollMaxRetries checks it is marked failed.
+	PollInterval   time.Duration
+	PollMaxRetries int
 }

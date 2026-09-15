@@ -90,17 +90,8 @@ func (r *Repository) NewRepoCtx(cfgs ...RepoctxConfig) *RepoCtx {
 	}
 }
 
-func (r *Repository) StartTransaction() *gorm.DB {
-	return r.DB.Begin()
-}
 
-func (r *Repository) CommitTransaction(db *gorm.DB) {
-	db.Commit()
-}
 
-func (r *Repository) RollBackTransaction(db *gorm.DB) {
-
-}
 func (c *RepoCtx) Start(op string) (*RepoCtx, trace.Span) {
 	if c.Tracer == nil {
 		return c, trace.SpanFromContext(c.Context)

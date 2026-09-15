@@ -34,8 +34,10 @@ type PaymentInitializedPayload struct {
 }
 
 type PaymentWebhookPayload struct {
-	Reference string
-	Provider  string
-	Event     string
-	Status    string
+	Reference   string
+	Provider    string
+	Event       string
+	Status      string
+	AmountMinor int64
+	Currency    string
 }

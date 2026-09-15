@@ -8,6 +8,7 @@ import (
 	"github/marveldo/eda-monolith/shared"
 
 	"github/marveldo/eda-monolith/internal/api/events"
+	"github/marveldo/eda-monolith/internal/ledger"
 	"github/marveldo/eda-monolith/internal/otp"
 	"github/marveldo/eda-monolith/internal/repository"
 
@@ -29,6 +30,7 @@ type Service struct {
 	RefreshTokenExpiry uint64
 	PaymentProvider    shared.PaymentProvider
 	PaymentCallbackURL string
+	Ledger             *ledger.Ledger
 }
 
 type ServiceConfig struct {
@@ -41,6 +43,7 @@ type ServiceConfig struct {
 	RefreshTokenExpiry uint64
 	PaymentProvider    shared.PaymentProvider
 	PaymentCallbackURL string
+	Ledger             *ledger.Ledger
 }
 
 type ServiceCtx struct {
@@ -78,6 +81,7 @@ func NewService(cfg *ServiceConfig) *Service {
 		JWTAuth:            jwtAuth,
 		PaymentProvider:    cfg.PaymentProvider,
 		PaymentCallbackURL: cfg.PaymentCallbackURL,
+		Ledger:             cfg.Ledger,
 		AccessTokenExpiry: func() uint64 {
 			if cfg.AccessTokenExpiry < 1 {
 				return 1
@@ -177,4 +181,20 @@ func (c *ServiceCtx) Fail(appErr *shared.AppError) *shared.AppError {
 		c.Span.SetStatus(codes.Error, msg)
 	}
 	return appErr
+}
+
+// WithTransaction runs fn inside a database transaction. It commits when fn
+// returns nil and rolls back when fn returns an error or panics, so the
+// transaction can never be left open. Keep HTTP and ledger calls outside fn:
+// the connection is held for as long as fn runs.
+func (s *Service) WithTransaction(ctx *ServiceCtx, fn func(repoCtx *repository.RepoCtx) error) error {
+	return s.Repository.DB.WithContext(ctx.Context).Transaction(func(tx *gorm.DB) error {
+		return fn(&repository.RepoCtx{
+			Context: ctx.Context,
+			DB:      tx,
+			Tracer:  s.Tracer,
+			Span:    trace.SpanFromContext(ctx.Context),
+			Logger:  ctx.Logger,
+		})
+	})
 }
