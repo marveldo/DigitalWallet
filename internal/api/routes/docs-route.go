@@ -24,6 +24,7 @@ var RoutesDocs = []RouteDoc{
 	HealthDocs,
 	UserDocs,
 	ActivityDocs,
+	WalletDocs,
 	PaymentDocs,
 }
 

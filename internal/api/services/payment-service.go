@@ -4,10 +4,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github/marveldo/eda-monolith/internal/api/events"
 	"github/marveldo/eda-monolith/internal/repository"
+	"github/marveldo/eda-monolith/internal/repository/db"
 	"github/marveldo/eda-monolith/shared"
 )
 
@@ -55,11 +55,6 @@ func (s *Service) InitializeDeposit(ctx *ServiceCtx, param *InitializeDepositPar
 		})
 	}
 
-	currency := strings.ToUpper(strings.TrimSpace(param.Currency))
-	if currency == "" {
-		currency = DefaultDepositCurrency
-	}
-
 	log := ctx.Logger.With(
 		slog.String("service", "payment.deposit.initialize"),
 		slog.String("user_id", userID),
@@ -76,16 +71,28 @@ func (s *Service) InitializeDeposit(ctx *ServiceCtx, param *InitializeDepositPar
 		return nil, ctx.Fail(&shared.AppError{Message: "Could Not Load User", Err: err, Code: http.StatusInternalServerError})
 	}
 
-	wallet, err := s.Repository.GetWalletByUser(repoCtx, userID, currency)
+	wallet, err := s.Repository.GetWalletByID(repoCtx, param.WalletID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return nil, ctx.Fail(&shared.AppError{
-				Message: "No " + currency + " Wallet Found For This Account",
-				Err:     err,
-				Code:    http.StatusNotFound,
-			})
+			return nil, ctx.Fail(&shared.AppError{Message: "Wallet Not Found", Err: err, Code: http.StatusNotFound})
 		}
 		return nil, ctx.Fail(&shared.AppError{Message: "Could Not Load Wallet", Err: err, Code: http.StatusInternalServerError})
+	}
+	// Someone else's wallet is reported as not found, so wallet ids cannot be probed.
+	if wallet.UserID != userID {
+		log.Warn("deposit rejected, caller does not own the wallet", slog.String("wallet_id", param.WalletID))
+		return nil, ctx.Fail(&shared.AppError{
+			Err:     errors.New("caller does not own this wallet"),
+			Message: "Wallet Not Found",
+			Code:    http.StatusNotFound,
+		})
+	}
+	if wallet.Status != string(db.WalletActive) {
+		return nil, ctx.Fail(&shared.AppError{
+			Err:     errors.New("wallet is not active"),
+			Message: "Wallet Is Not Active",
+			Code:    http.StatusUnprocessableEntity,
+		})
 	}
 
 	intent, err := s.Repository.CreateIntent(repoCtx, &repository.CreateIntentParam{

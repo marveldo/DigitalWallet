@@ -21,10 +21,11 @@ type Worker[T any] interface {
 }
 
 type AsynqWorkerStruct struct {
-	srv    *asynq.Server
-	mux    *asynq.ServeMux
-	Logger *slog.Logger
-	Queue  string
+	srv       *asynq.Server
+	inspector *asynq.Inspector
+	mux       *asynq.ServeMux
+	Logger    *slog.Logger
+	Queue     string
 	*EmailWorker
 	*ActivityWorker
 	*PaymentWorker
@@ -65,6 +66,7 @@ func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
 		return nil, err
 	}
 	client := NewAsyncClient(connOpts)
+	inspector := asynq.NewInspector(connOpts)
 	repository := cfg.Repository
 	emailWorker := NewEmailWorker(&EmailWorkerConfig{
 		Client:     client,
@@ -83,6 +85,7 @@ func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
 
 	paymentWorker := NewPaymentWorker(&PaymentWorkerConfig{
 		Client:       client,
+		Inspector:    inspector,
 		Repository:   repository,
 		Logger:       logger,
 		Queue:        queueName,
@@ -106,6 +109,7 @@ func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
 
 	w := &AsynqWorkerStruct{
 		srv:            asynq.NewServer(connOpts, asynccfg),
+		inspector:      inspector,
 		mux:            asynq.NewServeMux(),
 		Logger:         logger,
 		Queue:          queueName,
@@ -179,6 +183,11 @@ func (w *AsynqWorkerStruct) Shutdown() {
 	if w.EmailWorker != nil && w.EmailWorker.Client != nil {
 		if err := w.EmailWorker.Client.Close(); err != nil {
 			w.Logger.Error("failed closing queue client", slog.Any("error", err))
+		}
+	}
+	if w.inspector != nil {
+		if err := w.inspector.Close(); err != nil {
+			w.Logger.Error("failed closing queue inspector", slog.Any("error", err))
 		}
 	}
 }

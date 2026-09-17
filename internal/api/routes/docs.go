@@ -1,9 +1,10 @@
 package routes
 
 import (
+	"net/http"
+
 	"github.com/oaswrap/spec"
 	"github.com/oaswrap/spec/option"
-	"net/http"
 )
 
 func UserDocs(r spec.Router) {
@@ -13,7 +14,7 @@ func UserDocs(r spec.Router) {
 		option.Description("Registers a new user and returns the created record."),
 		option.Tags("Users"),
 		option.Request(new(CreateUserRequest)),
-		option.Response(http.StatusCreated, new(UserResponse)),
+		option.Response(http.StatusCreated, new(LoginResponse)),
 		option.Response(http.StatusConflict, new(ErrorResponse)),
 		option.Response(http.StatusUnprocessableEntity, new(ErrorResponse)),
 	)
@@ -109,11 +110,52 @@ func ActivityDocs(r spec.Router) {
 	)
 }
 
+func WalletDocs(r spec.Router) {
+	r.Post("/api/v1/wallets",
+		option.OperationID("wallet-create"),
+		option.Summary("Create a wallet"),
+		option.Description("Opens a wallet in the given currency for the authenticated user, defaulting to NGN. A user can hold one wallet per currency, so asking for a currency they already have returns 409. The wallet starts with a zero balance; fund it by starting a deposit in the same currency."),
+		option.Tags("Wallets"),
+		option.Security(BearerSecurityScheme),
+		option.Request(new(CreateWalletRequest)),
+		option.Response(http.StatusCreated, new(WalletResponse)),
+		option.Response(http.StatusBadRequest, new(ErrorResponse)),
+		option.Response(http.StatusUnauthorized, new(ErrorResponse)),
+		option.Response(http.StatusConflict, new(ErrorResponse)),
+		option.Response(http.StatusInternalServerError, new(ErrorResponse)),
+	)
+
+	r.Get("/api/v1/me/wallets",
+		option.OperationID("me-wallets-list"),
+		option.Summary("List my wallets"),
+		option.Description("Returns the authenticated user's wallets with their current balances in major units. Balances are read from the ledger, so they include every settled deposit."),
+		option.Tags("Wallets"),
+		option.Security(BearerSecurityScheme),
+		option.Response(http.StatusOK, new(WalletListResponse)),
+		option.Response(http.StatusUnauthorized, new(ErrorResponse)),
+		option.Response(http.StatusBadGateway, new(ErrorResponse)),
+		option.Response(http.StatusInternalServerError, new(ErrorResponse)),
+	)
+
+	r.Get("/api/v1/wallets/{id}",
+		option.OperationID("wallet-get"),
+		option.Summary("Get a wallet"),
+		option.Description("Returns one of the authenticated user's wallets with its current balance. A wallet belonging to another account is reported as not found rather than forbidden."),
+		option.Tags("Wallets"),
+		option.Security(BearerSecurityScheme),
+		option.Response(http.StatusOK, new(WalletResponse)),
+		option.Response(http.StatusUnauthorized, new(ErrorResponse)),
+		option.Response(http.StatusNotFound, new(ErrorResponse)),
+		option.Response(http.StatusBadGateway, new(ErrorResponse)),
+		option.Response(http.StatusInternalServerError, new(ErrorResponse)),
+	)
+}
+
 func PaymentDocs(r spec.Router) {
 	r.Post("/api/v1/payments/deposits",
 		option.OperationID("payment-deposit-initialize"),
 		option.Summary("Start a deposit"),
-		option.Description("Opens a deposit against the caller's wallet and returns the provider checkout link to send the user to. The account is read from the access token, so a caller can only ever fund their own wallet. The amount is in major units (5000.00 means five thousand naira) and the currency selects which of the caller's wallets is credited, defaulting to NGN. Nothing is credited here: the deposit is recorded as PENDING and only becomes SUCCESS once the provider confirms it, so poll the transaction endpoint or wait for the wallet balance to change rather than treating this response as payment."),
+		option.Description("Opens a deposit against the caller's wallet and returns the provider checkout link to send the user to. The account is read from the access token, so a caller can only ever fund their own wallet. The wallet_id must be a wallet the caller owns; a wallet belonging to someone else is reported as not found, and a frozen or closed wallet is rejected with 422. The amount is in major units of that wallet's currency (5000.00 in an NGN wallet means five thousand naira). Nothing is credited here: the deposit is recorded as PENDING and only becomes SUCCESS once the provider confirms it, so poll the transaction endpoint or wait for the wallet balance to change rather than treating this response as payment."),
 		option.Tags("Payments"),
 		option.Security(BearerSecurityScheme),
 		option.Request(new(InitializeDepositRequest)),

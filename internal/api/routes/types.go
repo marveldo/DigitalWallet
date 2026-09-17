@@ -80,9 +80,24 @@ type ActivityListResponse struct {
 	Offset     int                `json:"offset"`
 }
 
+type CreateWalletRequest struct {
+	Currency string `json:"currency,omitempty" validate:"omitempty,len=3" example:"NGN"`
+}
+
+type WalletResponse struct {
+	ID       string  `json:"id"`
+	Currency string  `json:"currency" example:"NGN"`
+	Status   string  `json:"status" example:"ACTIVE"`
+	Balance  float64 `json:"balance" example:"5000.00"`
+}
+
+type WalletListResponse struct {
+	Wallets []WalletResponse `json:"wallets"`
+}
+
 type InitializeDepositRequest struct {
+	WalletID string  `json:"wallet_id" validate:"required,uuid" example:"3f6c1a52-8d2e-4b7a-9c41-2f0e5d8b7a13"`
 	Amount   float64 `json:"amount" validate:"required,gt=0" example:"5000.00"`
-	Currency string  `json:"currency,omitempty" validate:"omitempty,len=3" example:"NGN"`
 }
 
 type DepositResponse struct {

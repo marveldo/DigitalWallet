@@ -92,11 +92,18 @@ const TimeLayout = time.RFC3339
 
 type InitializeDepositParam struct {
 	Amount   float64
-	Currency string
+	WalletID string
 }
 
 func (p *InitializeDepositParam) Money() shared.Money {
 	return shared.NewMoney(p.Amount)
+}
+
+type Wallet struct {
+	ID       string
+	Currency string
+	Status   string
+	Balance  shared.Money
 }
 
 type DepositInitialized struct {

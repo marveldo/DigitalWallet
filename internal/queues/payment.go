@@ -32,6 +32,8 @@ const (
 
 	intentStatusPending = "PENDING"
 	intentStatusSuccess = "SUCCESS"
+	intentStatusFailed  = "FAILED"
+	intentStatusRefund  = "REFUNDING"
 	walletStatusActive  = "ACTIVE"
 )
 
@@ -52,6 +54,7 @@ type PaymentPayload struct {
 
 type PaymentWorker struct {
 	*asynq.Client
+	Inspector *asynq.Inspector
 	*repository.Repository
 	Logger       *slog.Logger
 	Queue        string
@@ -65,6 +68,7 @@ type PaymentWorker struct {
 
 type PaymentWorkerConfig struct {
 	Client       *asynq.Client
+	Inspector    *asynq.Inspector
 	Repository   *repository.Repository
 	Logger       *slog.Logger
 	Queue        string
@@ -94,6 +98,7 @@ func NewPaymentWorker(cfg *PaymentWorkerConfig) *PaymentWorker {
 
 	return &PaymentWorker{
 		Client:       cfg.Client,
+		Inspector:    cfg.Inspector,
 		Repository:   cfg.Repository,
 		Logger:       logger,
 		Queue:        cfg.Queue,
@@ -110,6 +115,10 @@ func (p *PaymentWorker) EnqueueWithContext(task *asynq.Task, ctx context.Context
 	return EnqueueWithContext(task, ctx, p.Queue, p.Client, p.Logger)
 }
 
+func PollTaskID(reference string) string {
+	return TaskTypePaymentPoll + ":" + reference
+}
+
 // GenerateNewTask attaches each payment task's retry policy, so callers only
 // pick the task type.
 func (p *PaymentWorker) GenerateNewTask(name string, payload PaymentPayload) (*asynq.Task, error) {
@@ -119,7 +128,7 @@ func (p *PaymentWorker) GenerateNewTask(name string, payload PaymentPayload) (*a
 			asynq.MaxRetry(p.PollMaxRetry),
 			asynq.ProcessIn(p.PollInterval),
 			// One poller per deposit, however often it is enqueued.
-			asynq.TaskID(TaskTypePaymentPoll+":"+payload.Reference),
+			asynq.TaskID(PollTaskID(payload.Reference)),
 		)
 	case TaskTypePaymentWebhook:
 		return GenerateNewTask(name, payload, asynq.MaxRetry(PaymentWebhookRetry))
@@ -155,19 +164,37 @@ func (p *PaymentWorker) HandlePaymentWebhook(ctx context.Context, task *asynq.Ta
 
 	switch shared.PaymentStatus(payload.Status) {
 	case shared.PaymentSuccess:
-		return p.settle(ctx, log, payload.Reference, shared.NewMoneyFromMinor(payload.AmountMinor), payload.Currency)
+		err = p.settle(ctx, log, payload.Reference, shared.NewMoneyFromMinor(payload.AmountMinor), payload.Currency)
 	case shared.PaymentFailed:
-		return p.fail(ctx, log, payload.Reference)
+		err = p.fail(ctx, log, payload.Reference)
 	default:
 		log.InfoContext(ctx, "webhook does not resolve the payment, leaving it to the poller",
 			slog.String("status", payload.Status))
 		return nil
 	}
+	if err != nil {
+		return err
+	}
+	p.cancelPoll(ctx, log, payload.Reference)
+	return nil
 }
 
-// HandlePaymentPoll checks the provider in case the webhook never arrives.
-// While the payment is unresolved it returns ErrRetryLater, so asynq runs it
-// again after PollInterval; HandlePollExhausted runs after the last retry.
+func (p *PaymentWorker) cancelPoll(ctx context.Context, log *slog.Logger, reference string) {
+	if p.Inspector == nil {
+		return
+	}
+	err := p.Inspector.DeleteTask(p.Queue, PollTaskID(reference))
+	switch {
+	case err == nil:
+		log.InfoContext(ctx, "deposit resolved by webhook, poll task removed")
+	case errors.Is(err, asynq.ErrTaskNotFound), errors.Is(err, asynq.ErrQueueNotFound):
+		// Already finished, or never enqueued.
+	default:
+		// Most often the poll is running right now; it will stop on its own.
+		log.InfoContext(ctx, "could not remove poll task, it will stop on its next run", slog.Any("error", err))
+	}
+}
+
 func (p *PaymentWorker) HandlePaymentPoll(ctx context.Context, task *asynq.Task) error {
 	payload, log, err := p.decode(task)
 	if err != nil {
@@ -209,7 +236,6 @@ func (p *PaymentWorker) HandlePaymentPoll(ctx context.Context, task *asynq.Task)
 	}
 }
 
-// HandlePollExhausted closes a deposit the provider never resolved.
 func (p *PaymentWorker) HandlePollExhausted(ctx context.Context, task *asynq.Task, cause error) {
 	payload, log, err := p.decode(task)
 	if err != nil {
@@ -224,9 +250,6 @@ func (p *PaymentWorker) HandlePollExhausted(ctx context.Context, task *asynq.Tas
 	log.WarnContext(ctx, "deposit never resolved at the provider, marked failed")
 }
 
-// settle credits the wallet in the ledger, then marks the intent succeeded.
-// The ledger goes first and its transfer id is the intent id, so a retry after
-// a failed status update, or the webhook and poller racing, credits only once.
 func (p *PaymentWorker) settle(ctx context.Context, log *slog.Logger, reference string, amount shared.Money, currency string) error {
 	if p.Ledger == nil {
 		return fmt.Errorf("%w: no ledger configured", asynq.SkipRetry)
@@ -240,8 +263,13 @@ func (p *PaymentWorker) settle(ctx context.Context, log *slog.Logger, reference 
 		}
 		return err
 	}
-	if intent.Status == intentStatusSuccess {
-		log.InfoContext(ctx, "intent already settled, skipping")
+	switch intent.Status {
+	case intentStatusPending:
+	case intentStatusFailed, intentStatusRefund:
+		// The payment went through after the intent was given up on.
+		return p.refundLatePayment(ctx, log, intent)
+	default:
+		log.InfoContext(ctx, "intent already resolved, skipping", slog.String("status", intent.Status))
 		return nil
 	}
 	if amount != intent.Amount {
@@ -306,6 +334,61 @@ func (p *PaymentWorker) settle(ctx context.Context, log *slog.Logger, reference 
 		slog.String("wallet_id", settled.WalletID),
 	)
 	p.notify(ctx, repoCtx, log, settled)
+	return nil
+}
+
+func (p *PaymentWorker) refundLatePayment(ctx context.Context, log *slog.Logger, intent *repository.TransactionIntent) error {
+	if p.Provider == nil {
+		return fmt.Errorf("%w: no payment provider configured", asynq.SkipRetry)
+	}
+	repoCtx := p.repoCtx(ctx, log)
+	log = log.With(slog.String("intent_status", intent.Status), slog.Int64("amount_minor", intent.Amount.Minor()))
+
+	intentID, err := uuid.Parse(intent.ID)
+	if err != nil {
+		return fmt.Errorf("%w: %v", asynq.SkipRetry, err)
+	}
+
+
+	if intent.Status == intentStatusFailed {
+		credited, err := p.Ledger.TransferExists(ctx, intentID)
+		if err != nil {
+			return err
+		}
+		if credited {
+			settled, err := p.Repository.MarkIntentSucceeded(repoCtx, intent.ID)
+			if err != nil {
+				if errors.Is(err, repository.ErrIntentSucceeded) {
+					return nil
+				}
+				return err
+			}
+			log.WarnContext(ctx, "intent was failed after the wallet was credited, marked succeeded")
+			p.notify(ctx, repoCtx, log, settled)
+			return nil
+		}
+	}
+
+	if _, err := p.Repository.MarkIntentRefunding(repoCtx, intent.ID); err != nil {
+		if errors.Is(err, repository.ErrIntentNotFailed) {
+			log.InfoContext(ctx, "intent is no longer awaiting a refund, skipping")
+			return nil
+		}
+		return err
+	}
+
+	log.WarnContext(ctx, "payment arrived after the intent failed, refunding")
+	if err := p.Provider.Refund(ctx, intent.ID, intent.Amount); err != nil {
+		return err
+	}
+
+	if _, err := p.Repository.MarkIntentRefunded(repoCtx, intent.ID); err != nil {
+		if errors.Is(err, repository.ErrIntentNotFailed) {
+			return nil
+		}
+		return err
+	}
+	log.InfoContext(ctx, "late payment refunded")
 	return nil
 }
 

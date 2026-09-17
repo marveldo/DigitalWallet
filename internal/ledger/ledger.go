@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 
 	"github/marveldo/eda-monolith/shared"
 
@@ -14,8 +15,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// ErrRejected means TigerBeetle refused the request outright. Retrying the same
-// request will be refused again, so callers should not retry it.
 var ErrRejected = errors.New("ledger rejected the request")
 
 type Ledger struct {
@@ -76,17 +75,10 @@ func AccountID(walletID uuid.UUID) tb.Uint128 {
 func TransferID(intentID uuid.UUID) tb.Uint128 {
 	return tb.BytesToUint128(intentID)
 }
-
-// SettlementAccountID is the per-currency account deposits are debited from.
-// It stands for money held at the payment provider, so it runs a debit
-// balance. Small integers never collide with wallet ids, which are UUIDv4.
 func SettlementAccountID(ledgerID LedgerID) tb.Uint128 {
 	return tb.ToUint128(uint64(ledgerID))
 }
 
-// Deposit moves amount from the currency's settlement account into the wallet.
-// The transfer id comes from the caller, so repeating a deposit is a no-op:
-// TigerBeetle answers TransferExists and nothing is credited twice.
 func (l *Ledger) Deposit(ctx context.Context, param DepositParam) error {
 	ctx, span := l.StartSpan(ctx, "deposit")
 	defer span.End()
@@ -138,10 +130,104 @@ func (l *Ledger) deposit(param DepositParam) error {
 	return nil
 }
 
-// ensureAccounts creates the settlement and wallet accounts if they do not
-// exist yet. Creating an identical account again answers AccountExists.
+func (l *Ledger) TransferExists(ctx context.Context, intentID uuid.UUID) (bool, error) {
+	ctx, span := l.StartSpan(ctx, "transfer_exists")
+	defer span.End()
+
+	transfers, err := l.Client.LookupTransfers([]tb.Uint128{TransferID(intentID)})
+	if err != nil {
+		err = fmt.Errorf("lookup transfers: %w", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		l.Logger.ErrorContext(ctx, "ledger transfer lookup failed",
+			slog.String("transfer_id", intentID.String()), slog.Any("error", err))
+		return false, err
+	}
+	return len(transfers) > 0, nil
+}
+
+func (l *Ledger) EnsureWalletAccount(ctx context.Context, walletID uuid.UUID, currency string) error {
+	ctx, span := l.StartSpan(ctx, "ensure_wallet_account")
+	defer span.End()
+
+	err := func() error {
+		ledgerID, err := LedgerForCurrency(currency)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrRejected, err)
+		}
+		return l.ensureAccounts(ledgerID, walletID)
+	}()
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		l.Logger.ErrorContext(ctx, "ledger ensure wallet account failed",
+			slog.String("wallet_id", walletID.String()),
+			slog.String("currency", currency),
+			slog.Any("error", err),
+		)
+	}
+	return err
+}
+
+
+func (l *Ledger) EnsureSettlementAccounts(ctx context.Context) error {
+	ctx, span := l.StartSpan(ctx, "ensure_settlement_accounts")
+	defer span.End()
+
+	accounts := make([]tb.Account, 0, len(currencyLedgers))
+	for _, ledgerID := range currencyLedgers {
+		accounts = append(accounts, tb.Account{
+			ID:     SettlementAccountID(ledgerID),
+			Ledger: uint32(ledgerID),
+			Code:   uint16(AccountSettlement),
+		})
+	}
+	err := l.createAccounts(accounts)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		l.Logger.ErrorContext(ctx, "ledger ensure settlement accounts failed", slog.Any("error", err))
+	}
+	return err
+}
+
+
+func (l *Ledger) Balances(ctx context.Context, walletIDs []uuid.UUID) (map[uuid.UUID]shared.Money, error) {
+	ctx, span := l.StartSpan(ctx, "balances")
+	defer span.End()
+
+	balances := make(map[uuid.UUID]shared.Money, len(walletIDs))
+	if len(walletIDs) == 0 {
+		return balances, nil
+	}
+	ids := make([]tb.Uint128, 0, len(walletIDs))
+	byAccount := make(map[tb.Uint128]uuid.UUID, len(walletIDs))
+	for _, walletID := range walletIDs {
+		balances[walletID] = 0
+		id := AccountID(walletID)
+		ids = append(ids, id)
+		byAccount[id] = walletID
+	}
+
+	accounts, err := l.Client.LookupAccounts(ids)
+	if err != nil {
+		err = fmt.Errorf("lookup accounts: %w", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		l.Logger.ErrorContext(ctx, "ledger balance lookup failed", slog.Any("error", err))
+		return nil, err
+	}
+	for _, account := range accounts {
+		credits := account.CreditsPosted.BigInt()
+		debits := account.DebitsPosted.BigInt()
+		balance := new(big.Int).Sub(credits, debits)
+		balances[byAccount[account.ID]] = shared.NewMoneyFromMinor(balance.Int64())
+	}
+	return balances, nil
+}
+
 func (l *Ledger) ensureAccounts(ledgerID LedgerID, walletID uuid.UUID) error {
-	results, err := l.Client.CreateAccounts([]tb.Account{
+	return l.createAccounts([]tb.Account{
 		{
 			ID:     SettlementAccountID(ledgerID),
 			Ledger: uint32(ledgerID),
@@ -154,6 +240,10 @@ func (l *Ledger) ensureAccounts(ledgerID LedgerID, walletID uuid.UUID) error {
 			Flags:  tb.AccountFlags{DebitsMustNotExceedCredits: true}.ToUint16(),
 		},
 	})
+}
+
+func (l *Ledger) createAccounts(accounts []tb.Account) error {
+	results, err := l.Client.CreateAccounts(accounts)
 	if err != nil {
 		return fmt.Errorf("create accounts: %w", err)
 	}

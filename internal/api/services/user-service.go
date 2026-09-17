@@ -25,7 +25,7 @@ func (s *Service) MapUserToServiceDomain(user *repository.User) *User {
 	}
 }
 
-func (s *Service) CreateUser(ctx *ServiceCtx, userInput *UserInputParam) (*User, *shared.AppError) {
+func (s *Service) CreateUser(ctx *ServiceCtx, userInput *UserInputParam) (*LoginSuccessful, *shared.AppError) {
 	ctx, span := ctx.Start("user.create")
 	defer span.End()
 
@@ -73,6 +73,23 @@ func (s *Service) CreateUser(ctx *ServiceCtx, userInput *UserInputParam) (*User,
 	}
 	log.Info("user created", slog.String("user_id", user.ID))
 
+	claims := &ClaimsPayoad{
+		ID:         user.ID,
+		Email:      user.Email,
+		FirstName:  user.FirstName,
+		LastName:   user.LastName,
+		IsVerified: user.IsVerified,
+	}
+
+	accessToken, appErr := s.GenerateAccessToken(ctx, claims)
+	if appErr != nil {
+		return nil, appErr
+	}
+	refreshToken, appErr := s.GenerateRefreshToken(ctx, claims)
+	if appErr != nil {
+		return nil, appErr
+	}
+
 	s.PublishEvent(ctx, events.EventUserCreated, events.UserCreatedPayload{
 		UserID:    user.ID,
 		Email:     user.Email,
@@ -81,7 +98,11 @@ func (s *Service) CreateUser(ctx *ServiceCtx, userInput *UserInputParam) (*User,
 		CreatedAt: time.Now().UTC(),
 	})
 
-	return s.MapUserToServiceDomain(user), nil
+	return &LoginSuccessful{
+		AccessToken:  *accessToken,
+		RefreshToken: *refreshToken,
+		User:         *s.MapUserToServiceDomain(user),
+	}, nil
 }
 
 func (s *Service) ResendUserOtp(ctx *ServiceCtx, email string) (*ResendOtpOk, *shared.AppError) {

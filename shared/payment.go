@@ -61,4 +61,6 @@ type PaymentProvider interface {
 	Verify(ctx context.Context, reference string) (*PaymentVerification, error)
 	VerifyWebhookSignature(signature string, body []byte) error
 	ParseWebhook(body []byte) (*WebhookEvent, error)
+	// Refund returns amount of a settled payment to the payer.
+	Refund(ctx context.Context, reference string, amount Money) error
 }

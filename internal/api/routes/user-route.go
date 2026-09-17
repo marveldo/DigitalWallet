@@ -21,7 +21,7 @@ func (rt *Routes) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, appErr := rt.Services.CreateUser(serviceCtx, &services.UserInputParam{
+	result, appErr := rt.Services.CreateUser(serviceCtx, &services.UserInputParam{
 		FirstName:       body.FirstName,
 		LastName:        body.LastName,
 		Email:           body.Email,
@@ -36,8 +36,13 @@ func (rt *Routes) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Info("user registered", slog.String("user_id", user.ID))
-	rt.WriteJSON(w, http.StatusCreated, rt.MapUserToRouteDomain(user))
+	log.Info("user registered", slog.String("user_id", result.User.ID))
+	rt.WriteJSON(w, http.StatusCreated, LoginResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		TokenType:    "Bearer",
+		User:         rt.MapUserToRouteDomain(&result.User),
+	})
 }
 
 func (rt *Routes) UpdateUser(w http.ResponseWriter, r *http.Request) {

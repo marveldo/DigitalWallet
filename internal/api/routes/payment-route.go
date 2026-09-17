@@ -26,7 +26,7 @@ func (rt *Routes) InitializeDeposit(w http.ResponseWriter, r *http.Request) {
 
 	result, appErr := rt.Services.InitializeDeposit(ctx, &services.InitializeDepositParam{
 		Amount:   body.Amount,
-		Currency: body.Currency,
+		WalletID: body.WalletID,
 	})
 	if appErr != nil {
 		rt.WriteAppError(w, log, span, appErr)

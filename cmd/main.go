@@ -275,6 +275,16 @@ func StartNewLedger(lc fx.Lifecycle, app_cfg *config.Config, logger *slog.Logger
 		return nil, err
 	}
 	lc.Append(fx.Hook{
+		// The settlement accounts are shared by every user, so they are opened
+		// once here rather than on each deposit. A ledger that is not up yet
+		// does not stop the app: Deposit opens them again before crediting.
+		OnStart: func(ctx context.Context) error {
+			if err := l.EnsureSettlementAccounts(ctx); err != nil {
+				logger.Warn("could not open settlement accounts at startup, deposits will retry",
+					slog.Any("error", err))
+			}
+			return nil
+		},
 		OnStop: func(ctx context.Context) error {
 			l.Close()
 			return nil

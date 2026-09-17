@@ -12,6 +12,7 @@ import (
 var (
 	ErrIntentNotPending = errors.New("transaction intent is no longer pending")
 	ErrIntentSucceeded  = errors.New("transaction intent has already succeeded")
+	ErrIntentNotFailed  = errors.New("transaction intent is not in the expected refund state")
 )
 
 type TransactionRepository struct{}
@@ -61,6 +62,42 @@ func (t *TransactionRepository) GetWalletByUser(ctx *RepoCtx, userID string, cur
 	var wallet db.Wallet
 	if err := query.First(&wallet).Error; err != nil {
 		return nil, ctx.LogError("transaction.wallet_by_user", err, slog.String("user_id", userID))
+	}
+	return t.MapWalletModelToWallet(&wallet), nil
+}
+
+func (t *TransactionRepository) ListWalletsByUser(ctx *RepoCtx, userID string) ([]*Wallet, error) {
+	ctx, span := ctx.Start("transaction.list_wallets_by_user")
+	defer span.End()
+
+	parsedUser, err := ParseUUID(userID)
+	if err != nil {
+		return nil, ctx.LogError("transaction.list_wallets_by_user", err, slog.String("user_id", userID))
+	}
+
+	var models []db.Wallet
+	if err := ctx.DB.WithContext(ctx.Context).Where("user_id = ?", parsedUser).Order("created_at ASC").Find(&models).Error; err != nil {
+		return nil, ctx.LogError("transaction.list_wallets_by_user", err, slog.String("user_id", userID))
+	}
+	wallets := make([]*Wallet, 0, len(models))
+	for i := range models {
+		wallets = append(wallets, t.MapWalletModelToWallet(&models[i]))
+	}
+	return wallets, nil
+}
+
+func (t *TransactionRepository) CreateWallet(ctx *RepoCtx, userID string, currency string) (*Wallet, error) {
+	ctx, span := ctx.Start("transaction.create_wallet")
+	defer span.End()
+
+	parsedUser, err := ParseUUID(userID)
+	if err != nil {
+		return nil, ctx.LogError("transaction.create_wallet", err, slog.String("user_id", userID))
+	}
+
+	wallet := db.Wallet{UserID: parsedUser, Currency: db.Currency(currency)}
+	if err := ctx.DB.WithContext(ctx.Context).Create(&wallet).Error; err != nil {
+		return nil, ctx.LogError("transaction.create_wallet", err, slog.String("user_id", userID), slog.String("currency", currency))
 	}
 	return t.MapWalletModelToWallet(&wallet), nil
 }
@@ -160,6 +197,44 @@ func (t *TransactionRepository) MarkIntentFailed(ctx *RepoCtx, reference string)
 	return t.MapIntentModelToIntent(&intent), nil
 }
 
+// MarkIntentRefunding claims a failed intent for a refund. It also accepts an
+// intent already REFUNDING, so a retried refund task can pick it up again, but
+// never one that is PENDING, SUCCESS or REFUNDED.
+func (t *TransactionRepository) MarkIntentRefunding(ctx *RepoCtx, reference string) (*TransactionIntent, error) {
+	return t.moveIntent(ctx, "transaction.mark_refunding", reference,
+		[]db.TransactionStatus{db.TransactionFailed, db.TransactionRefunding}, db.TransactionRefunding)
+}
+
+// MarkIntentRefunded closes an intent once the provider accepted the refund.
+func (t *TransactionRepository) MarkIntentRefunded(ctx *RepoCtx, reference string) (*TransactionIntent, error) {
+	return t.moveIntent(ctx, "transaction.mark_refunded", reference,
+		[]db.TransactionStatus{db.TransactionRefunding}, db.TransactionRefunded)
+}
+
+func (t *TransactionRepository) moveIntent(ctx *RepoCtx, op string, reference string, from []db.TransactionStatus, to db.TransactionStatus) (*TransactionIntent, error) {
+	ctx, span := ctx.Start(op)
+	defer span.End()
+
+	parsed, err := ParseUUID(reference)
+	if err != nil {
+		return nil, ctx.LogError(op, err, slog.String("reference", reference))
+	}
+
+	var intent db.TransactionIntent
+	result := ctx.DB.WithContext(ctx.Context).
+		Model(&intent).
+		Clauses(clause.Returning{}).
+		Where("id = ? AND status IN ?", parsed, from).
+		Update("status", to)
+	if result.Error != nil {
+		return nil, ctx.LogError(op, result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return nil, ErrIntentNotFailed
+	}
+	return t.MapIntentModelToIntent(&intent), nil
+}
+
 func (t *TransactionRepository) GetWalletByID(ctx *RepoCtx, walletID string) (*Wallet, error) {
 	ctx, span := ctx.Start("transaction.wallet_by_id")
 	defer span.End()
@@ -193,7 +268,9 @@ func (t *TransactionRepository) MarkIntentSucceeded(ctx *RepoCtx, reference stri
 	result := ctx.DB.WithContext(ctx.Context).
 		Model(&intent).
 		Clauses(clause.Returning{}).
-		Where("id = ? AND status <> ?", parsed, db.TransactionSuccess).
+		// FAILED is allowed: the ledger may have credited the wallet just
+		// before the poller gave up on the intent.
+		Where("id = ? AND status IN ?", parsed, []db.TransactionStatus{db.TransactionPending, db.TransactionFailed}).
 		Update("status", db.TransactionSuccess)
 	if result.Error != nil {
 		return nil, ctx.LogError("transaction.mark_succeeded", result.Error)

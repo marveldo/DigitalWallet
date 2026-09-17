@@ -234,6 +234,34 @@ func (p *PaystackProvider) Verify(ctx context.Context, reference string) (*share
 	return verification, nil
 }
 
+// Refund asks Paystack to return amount of the transaction to the customer.
+// Paystack refuses to refund more than was charged, so a repeated call cannot
+// pay out twice.
+func (p *PaystackProvider) Refund(ctx context.Context, reference string, amount shared.Money) error {
+	ctx, span := p.StartSpanFromContext(ctx, "refund")
+	defer span.End()
+
+	_, err := p.do(ctx, http.MethodPost, "/refund", map[string]any{
+		"transaction": reference,
+		"amount":      amount.Minor(),
+	})
+	if err != nil {
+		p.Logger.ErrorContext(ctx, "could not refund paystack transaction",
+			slog.String("reference", reference),
+			slog.Any("error", err),
+		)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+
+	p.Logger.InfoContext(ctx, "paystack refund requested",
+		slog.String("reference", reference),
+		slog.Int64("amount_minor", amount.Minor()),
+	)
+	return nil
+}
+
 func (p *PaystackProvider) VerifyWebhookSignature(signature string, body []byte) error {
 	if p.Secret == "" {
 		return fmt.Errorf("%w: no paystack secret configured", shared.ErrInvalidSignature)

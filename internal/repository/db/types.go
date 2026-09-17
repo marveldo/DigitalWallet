@@ -30,6 +30,10 @@ const (
 	TransactionPending TransactionStatus = "PENDING"
 	TransactionSuccess TransactionStatus = "SUCCESS"
 	TransactionFailed  TransactionStatus = "FAILED"
+	// A payment that arrived after its intent had already failed is sent back
+	// to the payer: FAILED -> REFUNDING -> REFUNDED.
+	TransactionRefunding TransactionStatus = "REFUNDING"
+	TransactionRefunded  TransactionStatus = "REFUNDED"
 )
 
 type Currency string
