@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"sort"
+	"strings"
+	"time"
 
 	"github/marveldo/eda-monolith/shared"
 
@@ -15,7 +18,17 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-var ErrRejected = errors.New("ledger rejected the request")
+var (
+	ErrRejected = errors.New("ledger rejected the request")
+	// ErrInsufficientFunds is the sender not having the money. It is an
+	// ordinary outcome rather than a fault: TigerBeetle rejects the transfer
+	// atomically, which is why no balance is read before submitting one.
+	ErrInsufficientFunds = errors.New("insufficient funds")
+	// ErrCrossCurrency is a transfer whose two wallets sit on different
+	// ledgers. A single TigerBeetle transfer cannot cross ledgers, so this
+	// needs a linked pair through an FX account — not built yet.
+	ErrCrossCurrency = errors.New("cross-currency transfers are not supported")
+)
 
 type Ledger struct {
 	Client tb.Client
@@ -35,6 +48,15 @@ type DepositParam struct {
 	WalletID   uuid.UUID
 	Currency   string
 	Amount     shared.Money
+}
+
+type TransferParam struct {
+	TransferID          uuid.UUID
+	SenderWalletID      uuid.UUID
+	ReceipientWalletID  uuid.UUID
+	SenderCurrency      string
+	ReceipientsCurrency string
+	Amount              shared.Money
 }
 
 func NewLedger(cfg *LedgerConfig) (*Ledger, error) {
@@ -130,6 +152,69 @@ func (l *Ledger) deposit(param DepositParam) error {
 	return nil
 }
 
+// Transfer moves money between two wallets on the same ledger.
+func (l *Ledger) Transfer(ctx context.Context, param TransferParam) error {
+	ctx, span := l.StartSpan(ctx, "transfer")
+	defer span.End()
+
+	err := l.transfer(param)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		l.Logger.ErrorContext(ctx, "ledger transfer failed",
+			slog.String("transfer_id", param.TransferID.String()),
+			slog.String("sender_wallet_id", param.SenderWalletID.String()),
+			slog.String("recipient_wallet_id", param.ReceipientWalletID.String()),
+			slog.Any("error", err),
+		)
+	}
+	return err
+}
+
+func (l *Ledger) transfer(param TransferParam) error {
+	if !param.Amount.IsPositive() {
+		return fmt.Errorf("%w: transfer amount must be positive", ErrRejected)
+	}
+	if param.SenderWalletID == param.ReceipientWalletID {
+		return fmt.Errorf("%w: a wallet cannot transfer to itself", ErrRejected)
+	}
+	if !strings.EqualFold(param.SenderCurrency, param.ReceipientsCurrency) {
+		return fmt.Errorf("%w: %s to %s", ErrCrossCurrency, param.SenderCurrency, param.ReceipientsCurrency)
+	}
+	ledgerID, err := LedgerForCurrency(param.SenderCurrency)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrRejected, err)
+	}
+
+	if err := l.ensureAccounts(ledgerID, param.SenderWalletID); err != nil {
+		return err
+	}
+	if err := l.ensureAccounts(ledgerID, param.ReceipientWalletID); err != nil {
+		return err
+	}
+	results, err := l.Client.CreateTransfers([]tb.Transfer{{
+		ID:              TransferID(param.TransferID),
+		DebitAccountID:  AccountID(param.SenderWalletID),
+		CreditAccountID: AccountID(param.ReceipientWalletID),
+		Amount:          tb.ToUint128(uint64(param.Amount.Minor())),
+		Ledger:          uint32(ledgerID),
+		Code:            uint16(TransferInternal),
+	}})
+	if err != nil {
+		return fmt.Errorf("create transfer: %w", err)
+	}
+	for _, result := range results {
+		switch result.Status {
+		case tb.TransferCreated, tb.TransferExists:
+		case tb.TransferExceedsCredits:
+			return ErrInsufficientFunds
+		default:
+			return fmt.Errorf("%w: create transfer: %s", ErrRejected, result.Status)
+		}
+	}
+	return nil
+}
+
 func (l *Ledger) TransferExists(ctx context.Context, intentID uuid.UUID) (bool, error) {
 	ctx, span := l.StartSpan(ctx, "transfer_exists")
 	defer span.End()
@@ -169,7 +254,6 @@ func (l *Ledger) EnsureWalletAccount(ctx context.Context, walletID uuid.UUID, cu
 	return err
 }
 
-
 func (l *Ledger) EnsureSettlementAccounts(ctx context.Context) error {
 	ctx, span := l.StartSpan(ctx, "ensure_settlement_accounts")
 	defer span.End()
@@ -190,7 +274,6 @@ func (l *Ledger) EnsureSettlementAccounts(ctx context.Context) error {
 	}
 	return err
 }
-
 
 func (l *Ledger) Balances(ctx context.Context, walletIDs []uuid.UUID) (map[uuid.UUID]shared.Money, error) {
 	ctx, span := l.StartSpan(ctx, "balances")
@@ -255,4 +338,81 @@ func (l *Ledger) createAccounts(accounts []tb.Account) error {
 		}
 	}
 	return nil
+}
+
+// Movement is one posted entry against a wallet's ledger account: the
+// ledger's own view of a deposit or a transfer, after it settled.
+type Movement struct {
+	TransferID uuid.UUID
+	WalletID   uuid.UUID
+	Direction  Direction
+	Amount     shared.Money
+	Code       TransferCode
+	// Timestamp is TigerBeetle's nanosecond commit time, which is what the
+	// merge across several wallets is ordered by.
+	Timestamp uint64
+}
+
+func (m Movement) Time() time.Time {
+	return time.Unix(0, int64(m.Timestamp)).UTC()
+}
+
+type Direction string
+
+const (
+	DirectionCredit Direction = "CREDIT"
+	DirectionDebit  Direction = "DEBIT"
+)
+
+// WalletMovements returns the most recent posted entries against each wallet,
+// newest first. Every settled deposit and transfer is here, because the ledger
+// is where the money actually moved — but nothing that has not settled is,
+// so a pending or failed deposit has to come from Postgres instead.
+func (l *Ledger) WalletMovements(ctx context.Context, walletIDs []uuid.UUID, limit uint32) ([]Movement, error) {
+	ctx, span := l.StartSpan(ctx, "wallet_movements")
+	defer span.End()
+
+	if len(walletIDs) == 0 || limit == 0 {
+		return nil, nil
+	}
+
+	movements := make([]Movement, 0, len(walletIDs)*int(limit))
+	for _, walletID := range walletIDs {
+		accountID := AccountID(walletID)
+		transfers, err := l.Client.GetAccountTransfers(tb.AccountFilter{
+			AccountID: accountID,
+			Limit:     limit,
+			// Both sides of the account, newest first.
+			Flags: tb.AccountFilterFlags{Debits: true, Credits: true, Reversed: true}.ToUint32(),
+		})
+		if err != nil {
+			err = fmt.Errorf("get account transfers: %w", err)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			l.Logger.ErrorContext(ctx, "ledger movement lookup failed",
+				slog.String("wallet_id", walletID.String()), slog.Any("error", err))
+			return nil, err
+		}
+
+		for _, transfer := range transfers {
+			direction := DirectionCredit
+			if transfer.DebitAccountID == accountID {
+				direction = DirectionDebit
+			}
+			movements = append(movements, Movement{
+				TransferID: uuid.UUID(transfer.ID.Bytes()),
+				WalletID:   walletID,
+				Direction:  direction,
+				Amount:     shared.NewMoneyFromMinor(transfer.Amount.BigInt().Int64()),
+				Code:       TransferCode(transfer.Code),
+				Timestamp:  transfer.Timestamp,
+			})
+		}
+	}
+
+	// Each wallet came back sorted, but the wallets are interleaved.
+	sort.SliceStable(movements, func(i, j int) bool {
+		return movements[i].Timestamp > movements[j].Timestamp
+	})
+	return movements, nil
 }

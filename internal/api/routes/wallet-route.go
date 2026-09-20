@@ -67,9 +67,10 @@ func (rt *Routes) GetWallet(w http.ResponseWriter, r *http.Request) {
 
 func mapWallet(wallet services.Wallet) WalletResponse {
 	return WalletResponse{
-		ID:       wallet.ID,
-		Currency: wallet.Currency,
-		Status:   wallet.Status,
-		Balance:  wallet.Balance.Major(),
+		ID:            wallet.ID,
+		AccountNumber: wallet.AccountNumber,
+		Currency:      wallet.Currency,
+		Status:        wallet.Status,
+		Balance:       wallet.Balance.Major(),
 	}
 }

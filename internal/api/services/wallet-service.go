@@ -56,7 +56,7 @@ func (s *Service) CreateWallet(ctx *ServiceCtx, currency string) (*Wallet, *shar
 	log.Info("wallet created", slog.String("wallet_id", wallet.ID))
 
 	s.ensureLedgerAccount(ctx, wallet)
-	return &Wallet{ID: wallet.ID, Currency: wallet.Currency, Status: wallet.Status}, nil
+	return &Wallet{ID: wallet.ID, AccountNumber: wallet.AccountNumber, Currency: wallet.Currency, Status: wallet.Status}, nil
 }
 
 // ListMyWallets returns the caller's wallets with their ledger balances.
@@ -133,10 +133,11 @@ func (s *Service) withBalances(ctx *ServiceCtx, wallets []*repository.Wallet) ([
 	result := make([]Wallet, 0, len(wallets))
 	for i, wallet := range wallets {
 		result = append(result, Wallet{
-			ID:       wallet.ID,
-			Currency: wallet.Currency,
-			Status:   wallet.Status,
-			Balance:  balances[ids[i]],
+			ID:            wallet.ID,
+			AccountNumber: wallet.AccountNumber,
+			Currency:      wallet.Currency,
+			Status:        wallet.Status,
+			Balance:       balances[ids[i]],
 		})
 	}
 	return result, nil

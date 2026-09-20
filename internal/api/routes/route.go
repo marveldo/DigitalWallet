@@ -114,6 +114,8 @@ func SetupRoutes(cfg SetupRoutesConfigParams) *Routes {
 				m.Get("/me/wallets", routes.ListMyWallets)
 				m.Get("/wallets/{id}", routes.GetWallet)
 				m.Post("/payments/deposits", routes.InitializeDeposit)
+				m.Post("/transfers", routes.InitiateTransfer)
+				m.Get("/transfers/{id}", routes.GetTransfer)
 				m.Get("/me/transactions", routes.ListMyTransactions)
 				m.Get("/transactions/{reference}", routes.GetTransaction)
 			})

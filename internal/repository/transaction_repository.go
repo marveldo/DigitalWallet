@@ -38,10 +38,11 @@ func (t *TransactionRepository) MapIntentModelToIntent(model *db.TransactionInte
 
 func (t *TransactionRepository) MapWalletModelToWallet(model *db.Wallet) *Wallet {
 	return &Wallet{
-		ID:       model.ID.String(),
-		UserID:   model.UserID.String(),
-		Currency: string(model.Currency),
-		Status:   string(model.Status),
+		ID:            model.ID.String(),
+		AccountNumber: model.AccountNumber,
+		UserID:        model.UserID.String(),
+		Currency:      string(model.Currency),
+		Status:        string(model.Status),
 	}
 }
 
@@ -95,11 +96,29 @@ func (t *TransactionRepository) CreateWallet(ctx *RepoCtx, userID string, curren
 		return nil, ctx.LogError("transaction.create_wallet", err, slog.String("user_id", userID))
 	}
 
-	wallet := db.Wallet{UserID: parsedUser, Currency: db.Currency(currency)}
-	if err := ctx.DB.WithContext(ctx.Context).Create(&wallet).Error; err != nil {
-		return nil, ctx.LogError("transaction.create_wallet", err, slog.String("user_id", userID), slog.String("currency", currency))
+	// The inser
+	for attempt := 1; attempt <= accountNumberAttempts; attempt++ {
+		accountNumber, err := NewAccountNumber()
+		if err != nil {
+			return nil, ctx.LogError("transaction.create_wallet", err, slog.String("user_id", userID))
+		}
+
+		wallet := db.Wallet{UserID: parsedUser, Currency: db.Currency(currency), AccountNumber: accountNumber}
+		err = ctx.DB.WithContext(ctx.Context).Create(&wallet).Error
+		if err == nil {
+			return t.MapWalletModelToWallet(&wallet), nil
+		}
+
+		if !errors.Is(wrapGormError(err), ErrAlreadyExists) {
+			return nil, ctx.LogError("transaction.create_wallet", err, slog.String("user_id", userID), slog.String("currency", currency))
+		}
+		if ctx.Logger != nil {
+			ctx.Logger.WarnContext(ctx.Context, "account number collided, retrying",
+				slog.String("user_id", userID), slog.Int("attempt", attempt))
+		}
 	}
-	return t.MapWalletModelToWallet(&wallet), nil
+
+	return nil, ctx.LogError("transaction.create_wallet", ErrAccountNumberExhausted, slog.String("user_id", userID), slog.String("currency", currency))
 }
 
 func (t *TransactionRepository) CreateIntent(ctx *RepoCtx, param *CreateIntentParam) (*TransactionIntent, error) {
@@ -197,9 +216,7 @@ func (t *TransactionRepository) MarkIntentFailed(ctx *RepoCtx, reference string)
 	return t.MapIntentModelToIntent(&intent), nil
 }
 
-// MarkIntentRefunding claims a failed intent for a refund. It also accepts an
-// intent already REFUNDING, so a retried refund task can pick it up again, but
-// never one that is PENDING, SUCCESS or REFUNDED.
+
 func (t *TransactionRepository) MarkIntentRefunding(ctx *RepoCtx, reference string) (*TransactionIntent, error) {
 	return t.moveIntent(ctx, "transaction.mark_refunding", reference,
 		[]db.TransactionStatus{db.TransactionFailed, db.TransactionRefunding}, db.TransactionRefunding)

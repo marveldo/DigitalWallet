@@ -125,6 +125,8 @@ func mapTransaction(transaction services.Transaction) TransactionResponse {
 		Amount:    transaction.Amount.Major(),
 		Status:    transaction.Status,
 		Provider:  transaction.Provider,
+		Kind:      string(transaction.Kind),
+		Direction: transaction.Direction,
 		CreatedAt: transaction.CreatedAt,
 	}
 }

@@ -29,6 +29,7 @@ type AsynqWorkerStruct struct {
 	*EmailWorker
 	*ActivityWorker
 	*PaymentWorker
+	*TransferWorker
 }
 
 type AsynqWorkerConfig struct {
@@ -38,8 +39,6 @@ type AsynqWorkerConfig struct {
 	Sender     EmailSender
 	Provider   shared.PaymentProvider
 	Ledger     *ledger.Ledger
-	// PollInterval and PollMaxRetry drive the payment verify poller: it checks
-	// the provider every PollInterval, PollMaxRetry times, before giving up.
 	PollInterval time.Duration
 	PollMaxRetry int
 }
@@ -97,6 +96,15 @@ func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
 		PollMaxRetry: cfg.PollMaxRetry,
 	})
 
+	transferWorker := NewTransferWorker(&TransferWorkerConfig{
+		Client:     client,
+		Repository: repository,
+		Logger:     logger,
+		Queue:      queueName,
+		Ledger:     cfg.Ledger,
+		Activity:   activityWorker,
+	})
+
 	asynccfg := asynq.Config{
 		Concurrency: concurrency,
 		Queues:      map[string]int{queueName: 1},
@@ -116,16 +124,12 @@ func NewAsyncWorker(cfg *AsynqWorkerConfig) (*AsynqWorkerStruct, error) {
 		EmailWorker:    emailWorker,
 		ActivityWorker: activityWorker,
 		PaymentWorker:  paymentWorker,
+		TransferWorker: transferWorker,
 	}
 	w.RegisterHandlers()
 	return w, nil
 }
 
-// RedisConnOpt turns the configured URL into asynq's connection options.
-// ParseRedisURI understands redis://, rediss://, redis-socket:// and
-// redis-sentinel://, and picks the db number out of the path — so the URL is
-// never hand-split here. The explicit username/password/db settings win over
-// anything embedded in the URL.
 func RedisConnOpt(cfg *config.AsynqBackgroundWorker) (asynq.RedisConnOpt, error) {
 	parsed, err := asynq.ParseRedisURI(cfg.RedisUrl)
 	if err != nil {
@@ -159,10 +163,12 @@ func (w *AsynqWorkerStruct) RegisterHandlers() {
 	w.handlePayment(TaskTypePaymentPoll, w.PaymentWorker.HandlePaymentPoll,
 		OnRetriesExhausted(w.PaymentWorker.HandlePollExhausted),
 	)
+
+	w.handlePayment(TaskTypeTransferExecute, w.TransferWorker.HandleTransferExecute,
+		OnRetriesExhausted(w.TransferWorker.HandleTransferExhausted),
+	)
 }
 
-// handlePayment registers a payment handler behind logging, any extra mws, and
-// panic recovery innermost, so every middleware sees a panic as a failed attempt.
 func (w *AsynqWorkerStruct) handlePayment(pattern string, h asynq.HandlerFunc, mws ...asynq.MiddlewareFunc) {
 	chain := append([]asynq.MiddlewareFunc{LoggingMiddleware(w.PaymentWorker.Logger)}, mws...)
 	chain = append(chain, RecoverMiddleware(w.PaymentWorker.Logger))
@@ -196,8 +202,6 @@ func NewAsyncClient(cfg asynq.RedisConnOpt) *asynq.Client {
 	return asynq.NewClient(cfg)
 }
 
-// AsynqSlogAdapter satisfies asynq.Logger so the queue's own output lands in
-// the same structured log as everything else.
 type AsynqSlogAdapter struct {
 	logger *slog.Logger
 }

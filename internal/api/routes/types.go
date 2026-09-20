@@ -85,14 +85,32 @@ type CreateWalletRequest struct {
 }
 
 type WalletResponse struct {
-	ID       string  `json:"id"`
-	Currency string  `json:"currency" example:"NGN"`
-	Status   string  `json:"status" example:"ACTIVE"`
-	Balance  float64 `json:"balance" example:"5000.00"`
+	ID            string  `json:"id"`
+	AccountNumber string  `json:"account_number" example:"4820561973"`
+	Currency      string  `json:"currency" example:"NGN"`
+	Status        string  `json:"status" example:"ACTIVE"`
+	Balance       float64 `json:"balance" example:"5000.00"`
 }
 
 type WalletListResponse struct {
 	Wallets []WalletResponse `json:"wallets"`
+}
+
+type TransferRequest struct {
+	SenderWalletID         string  `json:"wallet_id" validate:"required,uuid" example:"3f6c1a52-8d2e-4b7a-9c41-2f0e5d8b7a13"`
+	RecipientAccountNumber string  `json:"account_number" validate:"required,len=10,number" example:"4820561973"`
+	Amount                 float64 `json:"amount" validate:"required,gt=0" example:"5000.00"`
+}
+
+type TransferResponse struct {
+	ID                string  `json:"id"`
+	SenderWalletID    string  `json:"wallet_id"`
+	RecipientWalletID string  `json:"recipient_wallet_id"`
+	Amount            float64 `json:"amount" example:"5000.00"`
+	Currency          string  `json:"currency" example:"NGN"`
+	Status            string  `json:"status" example:"PENDING"`
+	FailureReason     string  `json:"failure_reason,omitempty"`
+	CreatedAt         string  `json:"created_at"`
 }
 
 type InitializeDepositRequest struct {
@@ -109,12 +127,17 @@ type DepositResponse struct {
 	Status           string  `json:"status" example:"PENDING"`
 }
 
+// TransactionResponse keeps the original deposit fields and adds two: kind
+// tells a deposit from a transfer, and direction says whether the money came
+// in or went out for the caller.
 type TransactionResponse struct {
 	Reference string  `json:"reference"`
 	WalletID  string  `json:"wallet_id"`
 	Amount    float64 `json:"amount" example:"5000.00"`
 	Status    string  `json:"status" example:"SUCCESS"`
 	Provider  string  `json:"provider" example:"paystack"`
+	Kind      string  `json:"kind" example:"DEPOSIT"`
+	Direction string  `json:"direction" example:"CREDIT"`
 	CreatedAt string  `json:"created_at" example:"2026-09-12T14:30:00Z"`
 }
 

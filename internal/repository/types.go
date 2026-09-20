@@ -27,10 +27,34 @@ type UserFilters struct {
 }
 
 type Wallet struct {
-	ID       string
-	UserID   string
-	Currency string
-	Status   string
+	ID            string
+	AccountNumber string
+	UserID        string
+	Currency      string
+	Status        string
+}
+
+type Transfer struct {
+	ID                string
+	SenderUserID      string
+	SenderWalletID    string
+	RecipientUserID   string
+	RecipientWalletID string
+	Amount            shared.Money
+	Currency          string
+	Status            string
+	FailureReason     string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type CreateTransferParam struct {
+	SenderUserID      string
+	SenderWalletID    string
+	RecipientUserID   string
+	RecipientWalletID string
+	Amount            shared.Money
+	Currency          string
 }
 
 type UserInputParam struct {

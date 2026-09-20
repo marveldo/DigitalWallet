@@ -100,10 +100,32 @@ func (p *InitializeDepositParam) Money() shared.Money {
 }
 
 type Wallet struct {
-	ID       string
-	Currency string
-	Status   string
-	Balance  shared.Money
+	ID            string
+	AccountNumber string
+	Currency      string
+	Status        string
+	Balance       shared.Money
+}
+
+type Transfer struct {
+	ID                string
+	SenderWalletID    string
+	RecipientWalletID string
+	Amount            shared.Money
+	Currency          string
+	Status            string
+	FailureReason     string
+	CreatedAt         string
+}
+
+type InitiateTransferParam struct {
+	SenderWalletID         string
+	RecipientAccountNumber string
+	Amount                 float64
+}
+
+func (p *InitiateTransferParam) Money() shared.Money {
+	return shared.NewMoney(p.Amount)
 }
 
 type DepositInitialized struct {
@@ -115,6 +137,19 @@ type DepositInitialized struct {
 	Status           string
 }
 
+// TransactionKind separates a deposit from a wallet-to-wallet transfer. Both
+// look the same in the ledger, so the kind is what tells them apart.
+type TransactionKind string
+
+const (
+	TransactionKindDeposit  TransactionKind = "DEPOSIT"
+	TransactionKindTransfer TransactionKind = "TRANSFER"
+)
+
+type TransactionStatus string
+
+const TransactionStatusSuccess TransactionStatus = "SUCCESS"
+
 type Transaction struct {
 	Reference string
 	UserID    string
@@ -122,6 +157,10 @@ type Transaction struct {
 	Amount    shared.Money
 	Status    string
 	Provider  string
+	Kind      TransactionKind
+	// Direction is relative to the caller: CREDIT is money arriving in their
+	// wallet, DEBIT is money leaving it.
+	Direction string
 	CreatedAt string
 }
 

@@ -8,6 +8,8 @@ const (
 
 	EventPaymentInitialized     = "payment.initialized"
 	EventPaymentWebhookReceived = "payment.webhook.received"
+
+	EventTransferInitiated = "transfer.initiated"
 )
 
 type UserCreatedPayload struct {
@@ -29,6 +31,17 @@ type PaymentInitializedPayload struct {
 	UserID      string
 	Reference   string
 	Provider    string
+	AmountMinor int64
+	Currency    string
+}
+
+// TransferInitiatedPayload carries only the transfer id and enough context to
+// log usefully. The worker reloads the transfer from Postgres rather than
+// trusting amounts off the bus, so a stale or tampered payload cannot move a
+// different amount than the one that was recorded.
+type TransferInitiatedPayload struct {
+	TransferID  string
+	UserID      string
 	AmountMinor int64
 	Currency    string
 }

@@ -27,11 +27,9 @@ const (
 type TransactionStatus string
 
 const (
-	TransactionPending TransactionStatus = "PENDING"
-	TransactionSuccess TransactionStatus = "SUCCESS"
-	TransactionFailed  TransactionStatus = "FAILED"
-	// A payment that arrived after its intent had already failed is sent back
-	// to the payer: FAILED -> REFUNDING -> REFUNDED.
+	TransactionPending   TransactionStatus = "PENDING"
+	TransactionSuccess   TransactionStatus = "SUCCESS"
+	TransactionFailed    TransactionStatus = "FAILED"
 	TransactionRefunding TransactionStatus = "REFUNDING"
 	TransactionRefunded  TransactionStatus = "REFUNDED"
 )
@@ -79,13 +77,14 @@ func (u *User) BeforeCreate(tx *gorm.DB) error {
 }
 
 type Wallet struct {
-	ID        uuid.UUID    `gorm:"type:uuid;primaryKey"`
-	UserID    uuid.UUID    `gorm:"type:uuid;not null;index"`
-	Currency  Currency     `gorm:"type:varchar(3);not null;default:'USD'"`
-	Status    WalletStatus `gorm:"type:varchar(10); not null;default:'ACTIVE'"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt gorm.DeletedAt `gorm:"index"`
+	ID            uuid.UUID    `gorm:"type:uuid;primaryKey"`
+	AccountNumber string       `gorm:"type:varchar(10);not null;uniqueIndex"`
+	UserID        uuid.UUID    `gorm:"type:uuid;not null;index"`
+	Currency      Currency     `gorm:"type:varchar(3);not null;default:'USD'"`
+	Status        WalletStatus `gorm:"type:varchar(10); not null;default:'ACTIVE'"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     gorm.DeletedAt `gorm:"index"`
 }
 
 func (w *Wallet) BeforeCreate(tx *gorm.DB) error {
@@ -99,6 +98,26 @@ type UserActivity struct {
 	gorm.Model
 	UserID uuid.UUID `gorm:"type:uuid;not null;index"`
 	Action string    `gorm:"type:text;not null;"`
+}
+type Transfer struct {
+	ID                uuid.UUID         `gorm:"type:uuid;primaryKey"`
+	SenderUserID      uuid.UUID         `gorm:"type:uuid;not null;index"`
+	SenderWalletID    uuid.UUID         `gorm:"type:uuid;not null;index"`
+	RecipientUserID   uuid.UUID         `gorm:"type:uuid;not null;index"`
+	RecipientWalletID uuid.UUID         `gorm:"type:uuid;not null;index"`
+	Amount            shared.Money      `gorm:"type:bigint;not null"`
+	Currency          Currency          `gorm:"type:varchar(3);not null"`
+	Status            TransactionStatus `gorm:"type:text;not null;default:'PENDING'"`
+	FailureReason     string            `gorm:"type:text"`
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+func (t *Transfer) BeforeCreate(tx *gorm.DB) error {
+	if t.ID == uuid.Nil {
+		t.ID = uuid.New()
+	}
+	return nil
 }
 
 type TransactionIntent struct {

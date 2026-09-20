@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github/marveldo/eda-monolith/internal/api/events"
+	"github/marveldo/eda-monolith/internal/ledger"
 	"github/marveldo/eda-monolith/internal/repository"
 	"github/marveldo/eda-monolith/internal/repository/db"
 	"github/marveldo/eda-monolith/shared"
@@ -25,6 +26,8 @@ func (s *Service) MapIntentToServiceDomain(intent *repository.TransactionIntent)
 		Amount:    intent.Amount,
 		Status:    intent.Status,
 		Provider:  intent.Provider,
+		Kind:      TransactionKindDeposit,
+		Direction: string(ledger.DirectionCredit),
 		CreatedAt: intent.CreatedAt.UTC().Format(TimeLayout),
 	}
 }
@@ -78,7 +81,6 @@ func (s *Service) InitializeDeposit(ctx *ServiceCtx, param *InitializeDepositPar
 		}
 		return nil, ctx.Fail(&shared.AppError{Message: "Could Not Load Wallet", Err: err, Code: http.StatusInternalServerError})
 	}
-	// Someone else's wallet is reported as not found, so wallet ids cannot be probed.
 	if wallet.UserID != userID {
 		log.Warn("deposit rejected, caller does not own the wallet", slog.String("wallet_id", param.WalletID))
 		return nil, ctx.Fail(&shared.AppError{
@@ -107,7 +109,6 @@ func (s *Service) InitializeDeposit(ctx *ServiceCtx, param *InitializeDepositPar
 	}
 
 	log = log.With(slog.String("reference", intent.ID))
-
 	initialized, err := s.PaymentProvider.Initialize(ctx.Context, shared.InitializePaymentRequest{
 		Reference:   intent.ID,
 		Amount:      amount,
@@ -120,7 +121,7 @@ func (s *Service) InitializeDeposit(ctx *ServiceCtx, param *InitializeDepositPar
 		},
 	})
 	if err != nil {
-		log.Error("payment provider would not start the checkout", slog.Any("error", err))
+		log.Error("payment provider would not start the checkout", slog.Any("error", err),slog.Any("currency", wallet.Currency))
 		if _, failErr := s.Repository.MarkIntentFailed(repoCtx, intent.ID); failErr != nil {
 			log.Error("could not mark the intent failed", slog.Any("error", failErr))
 		}
@@ -208,7 +209,10 @@ func (s *Service) GetTransaction(ctx *ServiceCtx, reference string) (*Transactio
 	intent, err := s.Repository.GetIntentByReference(repoCtx, reference)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return nil, ctx.Fail(&shared.AppError{Message: "Transaction Not Found", Err: err, Code: http.StatusNotFound})
+			// The list returns transfer references alongside deposit ones, so
+			// a reference that is not a deposit is looked for as a transfer
+			// rather than 404ing on a row the client was just shown.
+			return s.transferAsTransaction(ctx, repoCtx, userID, reference)
 		}
 		return nil, ctx.Fail(&shared.AppError{Message: "Could Not Load Transaction", Err: err, Code: http.StatusInternalServerError})
 	}
@@ -225,31 +229,40 @@ func (s *Service) GetTransaction(ctx *ServiceCtx, reference string) (*Transactio
 	return &transaction, nil
 }
 
-func (s *Service) ListMyTransactions(ctx *ServiceCtx, page *ActivityPageParam) (*TransactionList, *shared.AppError) {
-	ctx, span := ctx.Start("payment.transaction.list")
-	defer span.End()
-
-	userID, appErr := CallerID(ctx)
-	if appErr != nil {
-		return nil, ctx.Fail(appErr)
-	}
-
-	limit, offset := page.Normalise()
-	repoCtx := s.GetRepoCtx(ServiceCtxConfig{Context: ctx.Context, Span: span, Logger: ctx.Logger})
-
-	result, err := s.Repository.ListUserIntents(repoCtx, userID, limit, offset)
+// transferAsTransaction renders a transfer in the transaction shape, so one
+// endpoint answers for both kinds of reference.
+func (s *Service) transferAsTransaction(ctx *ServiceCtx, repoCtx *repository.RepoCtx, userID string, reference string) (*Transaction, *shared.AppError) {
+	transfer, err := s.Repository.GetTransferByID(repoCtx, reference)
 	if err != nil {
-		return nil, ctx.Fail(&shared.AppError{Message: "Could Not Load Transactions", Err: err, Code: http.StatusInternalServerError})
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ctx.Fail(&shared.AppError{Message: "Transaction Not Found", Err: err, Code: http.StatusNotFound})
+		}
+		return nil, ctx.Fail(&shared.AppError{Message: "Could Not Load Transaction", Err: err, Code: http.StatusInternalServerError})
+	}
+	if transfer.SenderUserID != userID && transfer.RecipientUserID != userID {
+		return nil, ctx.Fail(&shared.AppError{
+			Err:     errors.New("caller is not party to this transfer"),
+			Message: "Transaction Not Found",
+			Code:    http.StatusNotFound,
+		})
 	}
 
-	transactions := make([]Transaction, 0, len(result.Intents))
-	for _, intent := range result.Intents {
-		transactions = append(transactions, s.MapIntentToServiceDomain(intent))
+	direction := ledger.DirectionDebit
+	walletID := transfer.SenderWalletID
+	if transfer.RecipientUserID == userID {
+		direction = ledger.DirectionCredit
+		walletID = transfer.RecipientWalletID
 	}
-	return &TransactionList{
-		Transactions: transactions,
-		Total:        result.Total,
-		Limit:        limit,
-		Offset:       offset,
+
+	return &Transaction{
+		Reference: transfer.ID,
+		UserID:    userID,
+		WalletID:  walletID,
+		Amount:    transfer.Amount,
+		Status:    transfer.Status,
+		Provider:  ProviderInternal,
+		Kind:      TransactionKindTransfer,
+		Direction: string(direction),
+		CreatedAt: transfer.CreatedAt.UTC().Format(TimeLayout),
 	}, nil
 }

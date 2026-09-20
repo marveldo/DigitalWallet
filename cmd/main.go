@@ -207,6 +207,7 @@ func StartNewDB(lc fx.Lifecycle, app_cfg *config.Config, logger *slog.Logger) *g
 			&dbmodels.Wallet{},
 			&dbmodels.UserActivity{},
 			&dbmodels.TransactionIntent{},
+			&dbmodels.Transfer{},
 		}
 
 		if err := db.AutoMigrate(migrationModels...); err != nil {
@@ -394,5 +395,7 @@ func RegisterListeners(bus *events.EventBus, worker *queues.AsynqWorkerStruct, l
 	events.RegisterEmailListeners(bus, worker.EmailWorker, otpStore)
 	events.RegisterActivityListeners(bus, worker.ActivityWorker)
 	events.RegisterPaymentListeners(bus, worker.PaymentWorker)
+	events.RegisterTransferListeners(bus, worker.TransferWorker)
+	events.RegisterTransferActivityListeners(bus, worker.ActivityWorker)
 	logger.Info("event listeners registered")
 }
