@@ -17,25 +17,30 @@ func GetViperInstance() *viper.Viper {
 }
 
 func SetupViper(v *viper.Viper) {
+	// Real environment variables always win over the file, and in a deployed
+	// environment (Render, Docker) they are the only source of configuration.
+	v.AutomaticEnv()
+
+	// .env is a local-development convenience. It is gitignored, so a deploy
+	// never has one, and its absence is not an error.
 	dir, err := os.Getwd()
 	if err != nil {
-		log.Fatalf("Error getting Path Directory , %v", err)
+		log.Printf("could not resolve the working directory, skipping .env: %v", err)
+		return
 	}
-	env_file_path := path.Join(dir, ".env")
-	_, err = os.Stat(env_file_path)
-	if os.IsNotExist(err) {
-		log.Fatalf("Error getting Path Directory , %v", err)
-	}
-	v.SetConfigFile(env_file_path)
-	if err = v.ReadInConfig(); err != nil {
-		_, ok := err.(viper.ConfigFileNotFoundError)
-		if ok {
-			log.Fatalf("Config File Doesnt Exist in Specific Path, %v", err)
-		} else {
-			log.Fatalf("Error reading config file, %v", err)
+	envFile := path.Join(dir, ".env")
+	if _, err := os.Stat(envFile); err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("no .env file at %s, reading configuration from the environment", envFile)
+			return
 		}
+		log.Fatalf("could not read %s: %v", envFile, err)
 	}
-	v.AutomaticEnv()
+
+	v.SetConfigFile(envFile)
+	if err := v.ReadInConfig(); err != nil {
+		log.Fatalf("error reading %s: %v", envFile, err)
+	}
 }
 
 func GetConfigFromViper(v *viper.Viper) *Config {
@@ -44,7 +49,7 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 			if v.GetInt("APP_PORT") < 1 {
 				return 7001
 			} else {
-				return viper.GetInt("APP_PORT")
+				return v.GetInt("APP_PORT")
 			}
 		} else {
 			return 7001
