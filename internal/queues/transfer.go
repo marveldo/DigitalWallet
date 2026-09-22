@@ -180,8 +180,6 @@ func (t *TransferWorker) HandleTransferExecute(ctx context.Context, task *asynq.
 	return nil
 }
 
-// loadWallets re-reads both wallets. A nil sender with a nil error means the
-// transfer was closed as failed and there is nothing left to do.
 func (t *TransferWorker) loadWallets(ctx context.Context, repoCtx *repository.RepoCtx, log *slog.Logger, transfer *repository.Transfer) (*repository.Wallet, *repository.Wallet, error) {
 	sender, err := t.Repository.GetWalletByID(repoCtx, transfer.SenderWalletID)
 	if err != nil {

@@ -56,6 +56,8 @@ func GetConfigFromViper(v *viper.Viper) *Config {
 		}
 	}()
 	databaseConfig := DatabaseConfig{
+		URL:      strings.TrimSpace(v.GetString("DATABASE_URL")),
+		SSLMode:  v.GetString("DB_SSLMODE"),
 		Host:     v.GetString("DB_HOST"),
 		Port:     v.GetInt("DB_PORT"),
 		Username: v.GetString("DB_USERNAME"),

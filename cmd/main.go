@@ -186,15 +186,7 @@ func StartTracer(lc fx.Lifecycle, ctx context.Context, cfg *config.Config) trace
 }
 
 func StartNewDB(lc fx.Lifecycle, app_cfg *config.Config, logger *slog.Logger) *gorm.DB {
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=disable",
-		app_cfg.Database.Host,
-		app_cfg.Database.Username,
-		app_cfg.Database.Password,
-		app_cfg.Database.Database,
-		app_cfg.Database.Port,
-	)
-
-	db, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn}), &gorm.Config{TranslateError: true})
+	db, err := gorm.Open(postgres.New(postgres.Config{DSN: app_cfg.Database.DSN()}), &gorm.Config{TranslateError: true})
 	if err != nil {
 		panic(err)
 	}
